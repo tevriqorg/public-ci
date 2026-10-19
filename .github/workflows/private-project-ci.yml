@@ -32,31 +32,25 @@ jobs:
         shell: bash
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
-          SOURCE_KEY: ${{ secrets.P16_SOURCE_DEPLOY_KEY }}
+          SOURCE_TOKEN: ${{ secrets.P16_SOURCE_TOKEN }}
         run: |
           set -euo pipefail
           if [[ ! "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ || "$SOURCE_REF" == -* ]]; then
             echo "Invalid source_ref format" >&2
             exit 2
           fi
-          if [[ -z "$SOURCE_KEY" ]]; then
-            echo "Missing repository secret P16_SOURCE_DEPLOY_KEY" >&2
+          if [[ -z "$SOURCE_TOKEN" ]]; then
+            echo "Missing repository secret P16_SOURCE_TOKEN" >&2
             exit 2
           fi
-          mkdir -p "$HOME/.ssh"
-          chmod 700 "$HOME/.ssh"
-          curl --fail --silent --show-error https://api.github.com/meta \
-            | jq -r '.ssh_keys[] | "github.com " + .' > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/known_hosts"
-          printf '%s\n' "$SOURCE_KEY" > "$HOME/.ssh/p16_deploy_key"
-          chmod 600 "$HOME/.ssh/p16_deploy_key"
-          unset SOURCE_KEY
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/p16_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-          git clone --no-checkout --filter=blob:none git@github.com:tevriqorg/P16-Home-Vision.git source
-          git -C source fetch --depth=1 origin "$SOURCE_REF"
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$SOURCE_TOKEN" | base64 -w0)"
+          unset SOURCE_TOKEN
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH_HEADER" \
+            clone --no-checkout --filter=blob:none https://github.com/tevriqorg/P16-Home-Vision.git source
+          git -C source -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH_HEADER" \
+            fetch --depth=1 origin "$SOURCE_REF"
+          unset AUTH_HEADER
           git -C source checkout --detach FETCH_HEAD
-          rm -f "$HOME/.ssh/p16_deploy_key"
-          rm -rf "$HOME/.ssh"
 
       - name: Set up Python
         uses: actions/setup-python@v5
