@@ -233,6 +233,7 @@ def recover_interrupted_archive_jobs(session: Session) -> int:
 RETRYABLE_ARCHIVE_ERRORS = (
     "NVR_SEARCH_TRANSPORT_FAILED",
     "NVR_SEARCH_HTTP_5",
+    "NVR_BANDWIDTH_LIMIT",
     "NVR_DOWNLOAD_FAILED",
     "NVR_DOWNLOAD_HTTP_5",
     "STORAGE_NOT_READY",

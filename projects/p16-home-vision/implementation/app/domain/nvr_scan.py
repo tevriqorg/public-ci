@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Iterable, Protocol
 import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
@@ -64,7 +65,13 @@ def scan_camera_range(
     query_end = query_end.astimezone(timezone.utc)
     scan_min_date = get_settings().nvr_scan_min_date if scan_min_date is None else scan_min_date
     if scan_min_date is not None:
-        floor = datetime.combine(scan_min_date, datetime.min.time(), tzinfo=timezone.utc)
+        try:
+            business_zone = ZoneInfo(nvr.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("NVR_TIMEZONE_INVALID") from exc
+        floor = datetime.combine(
+            scan_min_date, datetime.min.time(), tzinfo=business_zone,
+        ).astimezone(timezone.utc)
         if query_end <= floor:
             raise ValueError("NVR_SCAN_BEFORE_FLOOR")
         query_start = max(query_start, floor)

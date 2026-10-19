@@ -13,6 +13,9 @@ def test_read_only_archive_audit_reports_db_only_orphans_partials_and_stale_leas
     quarantine = volume_root / "recordings" / ".quarantine"
     quarantine.mkdir(parents=True)
     (quarantine / "orphan.mp4.invalid").write_bytes(b"fixture-quarantined")
+    volume_quarantine = volume_root / ".quarantine"
+    volume_quarantine.mkdir(parents=True)
+    (volume_quarantine / "stale.part.partial").write_bytes(b"fixture-volume-quarantine")
 
     nvr = NvrDevice(id="nvr-audit", name="NVR", host="fixture")
     camera = CameraTrack(id="camera-audit", nvr_id=nvr.id, track_id="101", camera_name="Camera")
@@ -61,6 +64,8 @@ def test_read_only_archive_audit_reports_db_only_orphans_partials_and_stale_leas
     assert "FILE_WITHOUT_DB_ASSET" in codes
     assert "PART_FILE_PRESENT" in codes
     assert "QUARANTINED_FILE_PRESENT" in codes
+    quarantine_paths = {finding["relative_path"] for finding in report["findings"] if finding["code"] == "QUARANTINED_FILE_PRESENT"}
+    assert ".quarantine/stale.part.partial" in quarantine_paths
     assert "STALE_ARCHIVE_LEASE" in codes
     assert report["backlog"]["available_sources"] == 0  # the active job owns the source
 

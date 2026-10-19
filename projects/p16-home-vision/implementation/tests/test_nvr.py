@@ -224,3 +224,24 @@ def test_reconcile_duplicate_discovery_reuses_source_id(session) -> None:
     second = reconcile_segments(session, nvr_id=nvr.id, segments=[segment], scan_id=None)
     assert first.discovered_count == second.discovered_count == 1
     assert first.source_ids == second.source_ids
+
+
+def test_scan_floor_uses_nvr_business_timezone(session) -> None:
+    nvr = NvrDevice(id="floor-zone-nvr", name="Floor Zone NVR", host="fixture", timezone="Asia/Shanghai")
+    camera = CameraTrack(id="floor-zone-camera", nvr_id=nvr.id, track_id="201", camera_name="Camera 201")
+    session.add(nvr); session.flush(); session.add(camera); session.flush()
+
+    class EmptySearcher:
+        def search_history(self, _request):
+            return []
+
+    result = scan_camera_range(
+        session, nvr=nvr, camera=camera,
+        query_start=datetime(2026, 8, 31, 16, tzinfo=timezone.utc),
+        query_end=datetime(2026, 9, 1, 16, tzinfo=timezone.utc),
+        searcher=EmptySearcher(), scan_id="scan-local-floor",
+        scan_min_date=date(2026, 9, 1),
+    )
+    scan = session.get(ScanRun, result.scan_id)
+    assert scan is not None
+    assert scan.query_start == datetime(2026, 8, 31, 16, tzinfo=timezone.utc)

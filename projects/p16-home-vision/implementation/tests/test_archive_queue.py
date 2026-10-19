@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.domain.archive_queue import (
     claim_next_archive_job,
     enqueue_archive_jobs,
@@ -116,7 +118,8 @@ def test_archive_claim_is_renewable_and_only_stale_claims_recover(session) -> No
     assert stale.lease_token is None
 
 
-def test_transient_archive_failure_retries_after_bounded_backoff(session) -> None:
+@pytest.mark.parametrize("error_code", ["NVR_DOWNLOAD_FAILED", "NVR_BANDWIDTH_LIMIT"])
+def test_transient_archive_failure_retries_after_bounded_backoff(session, error_code) -> None:
     nvr = NvrDevice(id="nvr-retry-auto", name="NVR", host="fixture")
     camera = CameraTrack(id="camera-retry-auto", nvr_id=nvr.id, track_id="101", camera_name="Camera")
     source = SourceRecording(
@@ -128,7 +131,7 @@ def test_transient_archive_failure_retries_after_bounded_backoff(session) -> Non
     failed_at = datetime(2026, 8, 31, 1, tzinfo=timezone.utc)
     job = ArchiveJob(
         id="job-retry-auto", source_recording_id=source.id, state="failed",
-        attempt_count=1, error_code="NVR_DOWNLOAD_FAILED", completed_at=failed_at,
+        attempt_count=1, error_code=error_code, completed_at=failed_at,
     )
     session.add(nvr); session.flush(); session.add(camera); session.flush()
     session.add(source); session.flush()

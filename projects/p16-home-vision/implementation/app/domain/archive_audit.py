@@ -167,20 +167,30 @@ def audit_archive_state(
     if include_file_orphans:
         orphan_count = 0
         for volume_id, volume in volumes.items():
-            root = Path(volume.mount_path_runtime) / "recordings"
-            if not root.is_dir():
-                continue
-            for path in root.rglob("*"):
-                if not path.is_file():
+            volume_root = Path(volume.mount_path_runtime).resolve(strict=False)
+            scan_roots = (volume_root / "recordings", volume_root / ".quarantine")
+            seen_paths: set[Path] = set()
+            for root in scan_roots:
+                if not root.is_dir():
                     continue
-                relative = path.relative_to(Path(volume.mount_path_runtime)).as_posix()
-                if ".quarantine" in path.parts:
-                    findings.append(ArchiveFinding("QUARANTINED_FILE_PRESENT", "warning", volume_id, relative))
-                elif path.name.endswith(".part"):
-                    findings.append(ArchiveFinding("PART_FILE_PRESENT", "warning", volume_id, relative))
-                elif path.suffix.lower() == ".mp4" and relative not in known_files[volume_id]:
-                    findings.append(ArchiveFinding("FILE_WITHOUT_DB_ASSET", "warning", volume_id, relative))
-                    orphan_count += 1
+                for path in root.rglob("*"):
+                    try:
+                        resolved = path.resolve(strict=False)
+                        if not resolved.is_relative_to(volume_root):
+                            continue
+                        relative = resolved.relative_to(volume_root).as_posix()
+                    except OSError:
+                        continue
+                    if resolved in seen_paths or not resolved.is_file():
+                        continue
+                    seen_paths.add(resolved)
+                    if ".quarantine" in Path(relative).parts:
+                        findings.append(ArchiveFinding("QUARANTINED_FILE_PRESENT", "warning", volume_id, relative))
+                    elif resolved.name.endswith(".part"):
+                        findings.append(ArchiveFinding("PART_FILE_PRESENT", "warning", volume_id, relative))
+                    elif resolved.suffix.lower() == ".mp4" and relative not in known_files[volume_id]:
+                        findings.append(ArchiveFinding("FILE_WITHOUT_DB_ASSET", "warning", volume_id, relative))
+                        orphan_count += 1
         result["file_orphan_scan"] = {"performed": True, "unregistered_mp4_count": orphan_count}
         result["findings"] = [asdict(item) for item in findings]
     else:
