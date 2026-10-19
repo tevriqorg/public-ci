@@ -23,6 +23,7 @@ dev = [
 
 [project.scripts]
 p16-media-derive = "media_derivation.cli:main"
+p16-media-transcribe = "media_derivation.transcribe_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

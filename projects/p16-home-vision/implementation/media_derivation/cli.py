@@ -117,12 +117,14 @@ def main() -> int:
             transcript_result = {"path": str(transcript_path), "schema": transcript.schema, "segments": len(transcript.segments)}
             transcript_state = "done"
         except Exception as exc:
-            _write_json_atomic(status_path, {
-                **base_status, "state": "failed", "error_code": "LOCAL_TRANSCRIPTION_FAILED", "error": str(exc)[-2000:],
-                "result": result,
-                "stages": {"raw": "done", "web": "done", "frames": "done", "audio": "done", "transcript": "failed", "reduce": "queued", "package": "awaiting_analysis"},
-            })
-            raise
+            transcript_result = {
+                "state": "failed",
+                "attempts": 1,
+                "error_code": "LOCAL_TRANSCRIPTION_FAILED",
+                "error": str(exc)[-2000:],
+                "retryable": True,
+            }
+            transcript_state = "failed"
 
     _write_json_atomic(
         status_path,
