@@ -36,11 +36,15 @@ def test_worker_adopts_valid_promoted_orphan_before_nvr_access(session, tmp_path
         total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
     )
     job = ArchiveJob(id="job-orphan", source_recording_id=source.id, state="queued")
-    session.add_all([nvr, camera])
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
     session.flush()
     session.add(source)
     session.flush()
-    session.add_all([volume, job])
+    session.add(volume)
+    session.flush()
+    session.add(job)
     session.commit()
 
     final_path = (
