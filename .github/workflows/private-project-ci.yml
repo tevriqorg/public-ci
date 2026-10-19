@@ -1,0 +1,98 @@
+name: Private project CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Project profile
+        required: true
+        type: choice
+        options:
+          - p16-home-vision
+      source_ref:
+        description: Branch, tag, or commit to test
+        required: true
+        default: feature/p16r2-r2-auto-preservation
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-ci-${{ inputs.project }}-${{ inputs.source_ref }}
+  cancel-in-progress: false
+
+jobs:
+  p16-ci:
+    if: github.ref == 'refs/heads/main' && inputs.project == 'p16-home-vision'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Validate request and checkout private source
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_KEY: ${{ secrets.P16_SOURCE_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ || "$SOURCE_REF" == -* ]]; then
+            echo "Invalid source_ref format" >&2
+            exit 2
+          fi
+          if [[ -z "$SOURCE_KEY" ]]; then
+            echo "Missing repository secret P16_SOURCE_DEPLOY_KEY" >&2
+            exit 2
+          fi
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          curl --fail --silent --show-error https://api.github.com/meta \
+            | jq -r '.ssh_keys[] | "github.com " + .' > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$SOURCE_KEY" > "$HOME/.ssh/p16_deploy_key"
+          chmod 600 "$HOME/.ssh/p16_deploy_key"
+          unset SOURCE_KEY
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/p16_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          git clone --no-checkout --filter=blob:none git@github.com:tevriqorg/P16-Home-Vision.git source
+          git -C source fetch --depth=1 origin "$SOURCE_REF"
+          git -C source checkout --detach FETCH_HEAD
+          rm -f "$HOME/.ssh/p16_deploy_key"
+          rm -rf "$HOME/.ssh"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+
+      - name: Install backend dependencies
+        working-directory: source
+        run: python -m pip install -e '.[dev]'
+
+      - name: Run backend tests
+        working-directory: source
+        run: pytest tests --ignore=tests/test_ui_w7.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        working-directory: source/implementation/frontend-r2
+        run: npm ci
+
+      - name: Run frontend tests and build
+        working-directory: source/implementation/frontend-r2
+        run: |
+          npm test -- --run
+          npm run build
+
+      - name: Run browser tests
+        working-directory: source/implementation/frontend-r2
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
