@@ -35,7 +35,10 @@ def build_analysis_package(
         rel = item.get("path")
         if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts:
             raise AnalysisPackageError("PACKAGE_ARTIFACT_PATH_UNSAFE")
-        path = (root / rel).resolve(strict=True)
+        try:
+            path = (root / rel).resolve(strict=True)
+        except OSError as exc:
+            raise AnalysisPackageError("PACKAGE_ARTIFACT_MISSING") from exc
         if not path.is_relative_to(root) or not path.is_file():
             raise AnalysisPackageError("PACKAGE_ARTIFACT_MISSING")
         entries.append({

@@ -40,7 +40,9 @@ def test_read_only_archive_audit_reports_db_only_orphans_partials_and_stale_leas
     session.flush()
     session.add(camera)
     session.flush()
-    session.add_all([source, volume, asset, job])
+    session.add(source)
+    session.flush()
+    session.add_all([volume, asset, job])
     session.flush()
 
     report = audit_archive_state(
@@ -82,7 +84,9 @@ def test_archive_audit_rejects_path_traversal_without_touching_outside_files(ses
     session.flush()
     session.add(camera)
     session.flush()
-    session.add_all([source, volume, asset])
+    session.add(source)
+    session.flush()
+    session.add_all([volume, asset])
     session.flush()
 
     report = audit_archive_state(session)

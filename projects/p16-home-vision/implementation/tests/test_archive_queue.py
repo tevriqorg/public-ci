@@ -131,7 +131,8 @@ def test_transient_archive_failure_retries_after_bounded_backoff(session) -> Non
         attempt_count=1, error_code="NVR_DOWNLOAD_FAILED", completed_at=failed_at,
     )
     session.add(nvr); session.flush(); session.add(camera); session.flush()
-    session.add_all([source, job]); session.flush()
+    session.add(source); session.flush()
+    session.add(job); session.flush()
 
     assert retry_due_archive_jobs(
         session, now=failed_at + timedelta(minutes=4), base_delay_seconds=300

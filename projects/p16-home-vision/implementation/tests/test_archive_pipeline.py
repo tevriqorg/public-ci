@@ -194,7 +194,9 @@ def test_finalize_recovers_valid_promoted_file_after_database_commit_gap(session
         id="archive-repair", node_id="fixture", mount_path_runtime=str(tmp_path), online=True, writable=True
     )
     job = ArchiveJob(id="job-repair", source_recording_id=source.id, state="queued")
-    session.add_all([source, volume, job])
+    session.add(source)
+    session.flush()
+    session.add_all([volume, job])
     session.flush()
     final = tmp_path / "archive" / "video.mp4"
     part = tmp_path / "archive" / "video.mp4.part"
@@ -245,7 +247,9 @@ def test_invalid_promoted_orphan_is_quarantined_without_deletion(session, tmp_pa
         id="archive-quarantine", node_id="fixture", mount_path_runtime=str(tmp_path), online=True, writable=True
     )
     job = ArchiveJob(id="job-quarantine", source_recording_id=source.id, state="queued")
-    session.add_all([source, volume, job])
+    session.add(source)
+    session.flush()
+    session.add_all([volume, job])
     session.flush()
     final = tmp_path / "recordings" / "video.mp4"
     write_bytes(final, b"<html>bad payload", 4096)
