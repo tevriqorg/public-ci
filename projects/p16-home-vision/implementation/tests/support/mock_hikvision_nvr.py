@@ -183,7 +183,8 @@ class MockHikvisionNvr:
                     self._send(status, b"bandwidth limited" if status == 453 else b"fixture error", "text/plain")
                     return
                 if corrupt:
-                    self._send(200, b"<?xml version='1.0'?><ResponseStatus><statusCode>4</statusCode></ResponseStatus>", "application/xml")
+                    error_body = b"<?xml version='1.0'?><ResponseStatus><statusCode>4</statusCode></ResponseStatus>" + b" " * 2048
+                    self._send(200, error_body, "application/xml")
                     return
                 recording = next((x for x in owner.recordings if int(x.start.timestamp()) == start_epoch), None)
                 if recording is None:

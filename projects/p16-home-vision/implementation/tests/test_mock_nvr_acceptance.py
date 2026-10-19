@@ -73,7 +73,7 @@ def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_p
     volume_root = tmp_path / "archive-volume"
     session.add(StorageVolume(
         id="volume-mock", node_id="ci-fixture", mount_path_runtime=str(volume_root),
-        total_bytes=2 * 1024**3, free_bytes=2 * 1024**3, online=True, writable=True,
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
     ))
     session.flush()
 
