@@ -1,5 +1,4 @@
-repository: tevriqorg/P16-Home-Vision
-branch: feature/p16r2-r2-auto-preservation
-commit: 68fe882045b252567c9a90b5e164473c5e3975e7
-copied_at_utc: 2026-10-19T23:42:00Z
-scope: implementation/ tracked source, tests, fixtures, and build configuration only
+repository=tevriqorg/P16-Home-Vision
+branch=feature/p16r2-r2-auto-preservation
+commit=97a5cd298154eca56a6427644caceb3261bff5b0
+copied_paths=implementation/
