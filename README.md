@@ -1,22 +1,22 @@
-# Shared public CI runner
+# Shared public GitHub Actions runner
 
-This repository hosts manual GitHub Actions workflows for projects whose own
-private repositories cannot use Actions quota. Project source remains in its
-private repository and is checked out only on an ephemeral GitHub-hosted runner.
+This repository runs builds and tests for projects whose own GitHub Actions
+are unavailable. Project sources used by this runner are stored under
+`projects/`; anyone can inspect the code and workflow because this repository
+is public.
 
-## Current profile: P16 Home Vision
+## P16 Home Vision
 
-1. Create a **fine-grained personal access token** restricted to
-   `tevriqorg/P16-Home-Vision`, with repository contents read-only access.
-2. Save it as this repository's Actions secret `P16_SOURCE_TOKEN`.
-3. Run **Actions → Private project CI → Run workflow** from `main`, select
-   `p16-home-vision`, and provide the branch, tag, or commit to test.
+The current P16 source snapshot is under `projects/p16-home-vision/implementation/`.
+`projects/p16-home-vision/SOURCE_REVISION` records its private-repository source
+commit. The copy contains tracked implementation, tests, fixtures, and build
+configuration. Runtime secrets, local databases, and household media are not
+part of the snapshot.
 
-The workflow is `workflow_dispatch` only, requires `main`, and has a fixed
-project allowlist. It does not accept arbitrary commands, upload source, or
-publish build artifacts. Keep each token scoped to one source repository and read-only contents access;
-use separate secrets per project. Add new profiles only after reviewing the
-checkout and test commands in a pull request.
+Run **Actions → Private project source CI → Run workflow** from `main` and
+select `p16-home-vision`. The runner builds and tests the checked-in snapshot
+on an ephemeral GitHub-hosted runner. It does not fetch another repository,
+need a source key, or upload build artifacts.
 
-Workflow logs and ephemeral runner disks are handled by GitHub Actions. Avoid
-printing secrets or private source contents in test output.
+Project snapshots are updated through reviewed commits. Never add credentials,
+private runtime configuration, local state, or real household media here.

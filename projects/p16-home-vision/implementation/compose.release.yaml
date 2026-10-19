@@ -1,0 +1,65 @@
+# Release-only overlay. Use together with compose.yaml.
+#
+# Example:
+#   export P16_RELEASE_REVISION=$(git rev-parse HEAD)
+#   export HOME_VISION_IMAGE=home-vision:${P16_RELEASE_REVISION}
+#   docker compose -f compose.yaml -f compose.release.yaml --profile nvr build home-vision
+#   docker compose -f compose.yaml -f compose.release.yaml --profile nvr up -d --no-build --pull never
+#
+# Build the shared image once. All four Docker roles use the same image tag;
+# the overlay clears build from the three non-API roles.
+#   python scripts/verify_release_consistency.py --expected-revision "${P16_RELEASE_REVISION}"
+#
+# This overlay intentionally fails variable interpolation when the immutable
+# release identity is missing. The ordinary compose.yaml remains usable for
+# bounded development with home-vision:local.
+
+x-p16-release-build: &p16_release_build
+  context: .
+  args:
+    P16_RELEASE_REVISION: "${P16_RELEASE_REVISION:?set P16_RELEASE_REVISION to the exact 40-character Git SHA}"
+
+x-p16-release-environment: &p16_release_environment
+  P16_RELEASE_REVISION: "${P16_RELEASE_REVISION:?set P16_RELEASE_REVISION to the exact 40-character Git SHA}"
+  P16_STATE_ID: "${P16_STATE_ID:?set P16_STATE_ID to the stable P16 state identity}"
+
+x-p16-release-labels: &p16_release_labels
+  io.tevriq.product: "P16"
+  io.tevriq.state-id: "${P16_STATE_ID:?set P16_STATE_ID to the stable P16 state identity}"
+
+services:
+  home-vision:
+    image: "${HOME_VISION_IMAGE:?set HOME_VISION_IMAGE to an immutable release tag/digest}"
+    build: *p16_release_build
+    environment:
+      <<: *p16_release_environment
+    labels:
+      <<: *p16_release_labels
+      io.tevriq.role: "api"
+
+  home-vision-nvr-scan:
+    image: "${HOME_VISION_IMAGE:?set HOME_VISION_IMAGE to an immutable release tag/digest}"
+    build: null
+    environment:
+      <<: *p16_release_environment
+    labels:
+      <<: *p16_release_labels
+      io.tevriq.role: "nvr-scan"
+
+  home-vision-archive-worker:
+    image: "${HOME_VISION_IMAGE:?set HOME_VISION_IMAGE to an immutable release tag/digest}"
+    build: null
+    environment:
+      <<: *p16_release_environment
+    labels:
+      <<: *p16_release_labels
+      io.tevriq.role: "archive-worker"
+
+  home-vision-thumbnail-worker:
+    image: "${HOME_VISION_IMAGE:?set HOME_VISION_IMAGE to an immutable release tag/digest}"
+    build: null
+    environment:
+      <<: *p16_release_environment
+    labels:
+      <<: *p16_release_labels
+      io.tevriq.role: "thumbnail-worker"

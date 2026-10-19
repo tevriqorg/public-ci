@@ -1,0 +1,174 @@
+services:
+  home-vision:
+    build:
+      context: .
+    image: "${HOME_VISION_IMAGE:-home-vision:local}"
+    restart: unless-stopped
+    user: "${HOME_VISION_UID:-1000}:${HOME_VISION_GID:-1000}"
+    environment:
+      PYTHONPATH: "/srv/home-vision"
+      HOME_VISION_ENVIRONMENT: "${HOME_VISION_ENVIRONMENT:-production}"
+      HOME_VISION_DATABASE_URL: "sqlite:////state/home-vision.db"
+      HOME_VISION_DATA_ROOT: "/state/data"
+      HOME_VISION_ARCHIVE_QUEUE_ENABLED: "true"
+      HOME_VISION_ARCHIVE_POLL_SECONDS: "${HOME_VISION_ARCHIVE_POLL_SECONDS:-2}"
+    volumes:
+      - type: bind
+        source: "${HOME_VISION_STATE_DIR:?set HOME_VISION_STATE_DIR to a local filesystem path}"
+        target: /state
+      - type: bind
+        source: "${HOME_VISION_ARCHIVE_A:?set HOME_VISION_ARCHIVE_A}"
+        target: /archive/a
+      - type: bind
+        source: "${HOME_VISION_ARCHIVE_B:?set HOME_VISION_ARCHIVE_B}"
+        target: /archive/b
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    expose:
+      - "8000"
+    # Direct backend exposure is local-only by default. Stable application
+    # access belongs behind P13; any LAN exception must follow the restricted
+    # ingress contract instead of silently binding all interfaces.
+    ports:
+      - "${HOME_VISION_BIND_ADDRESS:-127.0.0.1}:8000:8000"
+
+  # Real NVR history scanner. It is opt-in until P15 supplies runtime-only
+  # endpoint credentials and the live #94 preflight is complete.
+  home-vision-nvr-scan:
+    profiles: ["nvr"]
+    build:
+      context: .
+    image: "${HOME_VISION_IMAGE:-home-vision:local}"
+    restart: unless-stopped
+    user: "${HOME_VISION_UID:-1000}:${HOME_VISION_GID:-1000}"
+    env_file:
+      - /opt/home-vision/.nvr.env
+    environment:
+      PYTHONPATH: "/srv/home-vision"
+      HOME_VISION_ENVIRONMENT: "${HOME_VISION_ENVIRONMENT:-production}"
+      HOME_VISION_DATABASE_URL: "sqlite:////state/home-vision.db"
+      HOME_VISION_DATA_ROOT: "/state/data"
+      HOME_VISION_NVR_SCAN_MIN_DATE: "${HOME_VISION_NVR_SCAN_MIN_DATE:-2026-09-01}"
+    volumes:
+      - type: bind
+        source: "${HOME_VISION_STATE_DIR:?set HOME_VISION_STATE_DIR to a local filesystem path}"
+        target: /state
+      - type: bind
+        source: "${HOME_VISION_ARCHIVE_A:?set HOME_VISION_ARCHIVE_A}"
+        target: /archive/a
+      - type: bind
+        source: "${HOME_VISION_ARCHIVE_B:?set HOME_VISION_ARCHIVE_B}"
+        target: /archive/b
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+    command: ["python", "scripts/scan_nvr.py", "--watch"]
+
+  home-vision-archive-worker:
+    profiles: ["nvr"]
+    build:
+      context: .
+    image: "${HOME_VISION_IMAGE:-home-vision:local}"
+    restart: unless-stopped
+    user: "${HOME_VISION_UID:-1000}:${HOME_VISION_GID:-1000}"
+    environment:
+      PYTHONPATH: "/srv/home-vision"
+      HOME_VISION_ENVIRONMENT: "${HOME_VISION_ENVIRONMENT:-production}"
+      HOME_VISION_DATABASE_URL: "sqlite:////state/home-vision.db"
+      HOME_VISION_DATA_ROOT: "/state/data"
+      HOME_VISION_ARCHIVE_QUEUE_ENABLED: "true"
+      HOME_VISION_ARCHIVE_DOWNLOAD_METHOD: "${HOME_VISION_ARCHIVE_DOWNLOAD_METHOD:-POST}"
+      HOME_VISION_NVR_BASE_URL: "${HOME_VISION_NVR_BASE_URL:-}"
+      HOME_VISION_NVR_USERNAME: "${HOME_VISION_NVR_USERNAME:-}"
+      HOME_VISION_NVR_PASSWORD: "${HOME_VISION_NVR_PASSWORD:-}"
+      HOME_VISION_NVR_ID: "${HOME_VISION_NVR_ID:-}"
+      HOME_VISION_NVR_TRACKS: "${HOME_VISION_NVR_TRACKS:-}"
+      HOME_VISION_ARCHIVE_POLL_SECONDS: "${HOME_VISION_ARCHIVE_POLL_SECONDS:-2}"
+    volumes:
+      - type: bind
+        source: "${HOME_VISION_STATE_DIR:?set HOME_VISION_STATE_DIR to a local filesystem path}"
+        target: /state
+      - type: bind
+        source: "${HOME_VISION_ARCHIVE_A:?set HOME_VISION_ARCHIVE_A}"
+        target: /archive/a
+      - type: bind
+        source: "${HOME_VISION_ARCHIVE_B:?set HOME_VISION_ARCHIVE_B}"
+        target: /archive/b
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "scripts/check_archive_worker_heartbeat.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    command: ["python", "scripts/archive_worker.py", "--interval-seconds", "${HOME_VISION_ARCHIVE_POLL_SECONDS:-2}"]
+
+  home-vision-thumbnail-worker:
+    profiles: ["nvr"]
+    build:
+      context: .
+    image: "${HOME_VISION_IMAGE:-home-vision:local}"
+    restart: unless-stopped
+    user: "${HOME_VISION_UID:-1000}:${HOME_VISION_GID:-1000}"
+    environment:
+      PYTHONPATH: "/srv/home-vision"
+      HOME_VISION_ENVIRONMENT: "${HOME_VISION_ENVIRONMENT:-production}"
+      HOME_VISION_DATABASE_URL: "sqlite:////state/home-vision.db"
+      HOME_VISION_DATA_ROOT: "/state/data"
+      HOME_VISION_THUMBNAIL_TIMEZONE: "${HOME_VISION_THUMBNAIL_TIMEZONE:-Asia/Shanghai}"
+      HOME_VISION_THUMBNAIL_SCHEDULE_HOUR: "${HOME_VISION_THUMBNAIL_SCHEDULE_HOUR:-12}"
+      HOME_VISION_THUMBNAIL_SCHEDULE_MINUTE: "${HOME_VISION_THUMBNAIL_SCHEDULE_MINUTE:-0}"
+      HOME_VISION_THUMBNAIL_POLL_SECONDS: "${HOME_VISION_THUMBNAIL_POLL_SECONDS:-60}"
+      HOME_VISION_NVR_SCAN_MIN_DATE: "${HOME_VISION_NVR_SCAN_MIN_DATE:-2026-09-01}"
+      HOME_VISION_ARCHIVE_DOWNLOAD_METHOD: "${HOME_VISION_ARCHIVE_DOWNLOAD_METHOD:-POST}"
+      HOME_VISION_NVR_BASE_URL: "${HOME_VISION_NVR_BASE_URL:-}"
+      HOME_VISION_NVR_USERNAME: "${HOME_VISION_NVR_USERNAME:-}"
+      HOME_VISION_NVR_PASSWORD: "${HOME_VISION_NVR_PASSWORD:-}"
+      HOME_VISION_NVR_ID: "${HOME_VISION_NVR_ID:-}"
+    volumes:
+      - type: bind
+        source: "${HOME_VISION_STATE_DIR:?set HOME_VISION_STATE_DIR to a local filesystem path}"
+        target: /state
+      - type: bind
+        source: "${HOME_VISION_ARCHIVE_A:?set HOME_VISION_ARCHIVE_A}"
+        target: /archive/a
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+    command: ["python", "scripts/generate_unarchived_thumbnails.py", "--watch"]
+
+# Stable external client routing is intentionally not declared here.
+# P13 managed Gateway owns the durable application-layer route later.

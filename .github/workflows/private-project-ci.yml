@@ -1,25 +1,20 @@
-name: Private project CI
+name: Private project source CI
 
 on:
   workflow_dispatch:
     inputs:
       project:
-        description: Project profile
+        description: Project source snapshot to test
         required: true
         type: choice
         options:
           - p16-home-vision
-      source_ref:
-        description: Branch, tag, or commit to test
-        required: true
-        default: feature/p16r2-r2-auto-preservation
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: private-ci-${{ inputs.project }}-${{ inputs.source_ref }}
+  group: public-ci-${{ inputs.project }}
   cancel-in-progress: false
 
 jobs:
@@ -28,47 +23,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Validate request and checkout private source
-        shell: bash
-        env:
-          SOURCE_REF: ${{ inputs.source_ref }}
-          SOURCE_TOKEN: ${{ secrets.P16_SOURCE_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ || "$SOURCE_REF" == -* ]]; then
-            echo "Invalid source_ref format" >&2
-            exit 2
-          fi
-          if [[ -z "$SOURCE_TOKEN" ]]; then
-            echo "Missing repository secret P16_SOURCE_TOKEN" >&2
-            exit 2
-          fi
-          AUTH_HEADER="$(printf 'x-access-token:%s' "$SOURCE_TOKEN" | base64 -w0)"
-          unset SOURCE_TOKEN
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH_HEADER" \
-            clone --no-checkout --filter=blob:none https://github.com/tevriqorg/P16-Home-Vision.git source
-          git -C source -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH_HEADER" \
-            fetch --depth=1 origin "$SOURCE_REF"
-          unset AUTH_HEADER
-          git -C source checkout --detach FETCH_HEAD
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: projects/p16-home-vision/implementation/pyproject.toml
 
       - name: Install media tools
         run: |
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
 
       - name: Install backend dependencies
-        working-directory: source
+        working-directory: projects/p16-home-vision/implementation
         run: python -m pip install -e '.[dev]'
 
-      - name: Run backend tests
-        working-directory: source
-        run: pytest tests --ignore=tests/test_ui_w7.py
+      - name: Run backend regression suite
+        working-directory: projects/p16-home-vision/implementation
+        run: |
+          pytest tests --ignore=tests/test_ui_w7.py
+          pytest tests/test_ui_w7.py -k "not test_runtime_refreshes_task_badge_catalog_and_live_progress_without_losing_context and not test_runtime_preserves_progressive_archive_and_player_navigation"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -76,17 +55,18 @@ jobs:
           node-version: '22'
 
       - name: Install frontend dependencies
-        working-directory: source/implementation/frontend-r2
-        run: npm ci
+        working-directory: projects/p16-home-vision/implementation/frontend-r2
+        run: npm install --no-audit --no-fund
 
       - name: Run frontend tests and build
-        working-directory: source/implementation/frontend-r2
+        working-directory: projects/p16-home-vision/implementation/frontend-r2
         run: |
-          npm test -- --run
+          npm test
           npm run build
 
-      - name: Run browser tests
-        working-directory: source/implementation/frontend-r2
+      - name: Run four-viewport browser acceptance
+        working-directory: projects/p16-home-vision/implementation/frontend-r2
         run: |
+          npm install --no-save --no-audit --no-fund @playwright/test@1.56.1
           npx playwright install --with-deps chromium
-          npx playwright test
+          npx playwright test --config=playwright.config.js

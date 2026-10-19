@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tevriq.homevision.normalize-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3.12</string>
+    <string>/Users/don/home-vision-mba-worker/m1_normalize_worker.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>/Users/don/home-vision-mba-worker</string>
+  <key>StandardOutPath</key>
+  <string>/Users/don/home-vision-mba-worker/worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/don/home-vision-mba-worker/worker.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME_VISION_NORMALIZE_API</key>
+    <string>http://192.168.50.61:8000/internal/normalize</string>
+    <key>HOME_VISION_SMB_ROOT</key>
+    <string>/Volumes/A8_sdb1</string>
+    <key>HOME_VISION_WORK_ROOT</key>
+    <string>/Users/don/home-vision-mba-worker</string>
+    <key>HOME_VISION_NORMALIZE_CONCURRENCY</key>
+    <string>3</string>
+    <key>FFMPEG</key>
+    <string>/opt/homebrew/bin/ffmpeg</string>
+    <key>FFPROBE</key>
+    <string>/opt/homebrew/bin/ffprobe</string>
+  </dict>
+</dict>
+</plist>
