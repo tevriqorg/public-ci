@@ -31,12 +31,17 @@ def benchmark_reducer(
     start = time.perf_counter()
     selected = reducer.reduce(frames)
     elapsed = (time.perf_counter() - start) * 1000
+    input_by_id = {frame.artifact_id: frame for frame in frames}
+    if len(input_by_id) != len(frames):
+        raise ValueError("FRAME_BENCHMARK_DUPLICATE_INPUT")
     selected_frames = [row.frame for row in selected]
     selected_offsets = [row.source_pts_seconds for row in selected_frames]
     if len(set(frame.artifact_id for frame in selected_frames)) != len(selected_frames):
         raise ValueError("FRAME_BENCHMARK_DUPLICATE_SELECTION")
-    if not set(frame.artifact_id for frame in selected_frames) <= set(frame.artifact_id for frame in frames):
+    if not set(frame.artifact_id for frame in selected_frames) <= set(input_by_id):
         raise ValueError("FRAME_BENCHMARK_FOREIGN_FRAME")
+    if any(frame != input_by_id[frame.artifact_id] for frame in selected_frames):
+        raise ValueError("FRAME_BENCHMARK_MUTATED_FRAME")
     refs = tuple(float(value) for value in reference_offsets_seconds)
     errors = [min((abs(ref - actual) for actual in selected_offsets), default=float("inf")) for ref in refs]
     matched = [error for error in errors if error <= tolerance_seconds]

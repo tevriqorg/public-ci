@@ -87,3 +87,15 @@ def test_energy_vad_reads_long_recording_in_bounded_chunks(tmp_path, monkeypatch
     assert detect_speech_regions(path) == ()
     assert len(requested_frames) >= 3
     assert max(requested_frames) <= rate * 5
+
+
+def test_transcript_rejects_segment_ending_after_vad_region(tmp_path):
+    path = tmp_path / "speech.wav"
+    _wav(path)
+
+    class ASR:
+        def transcribe(self, wav_path, regions):
+            return (TranscriptSegment(regions[0].start_ms, regions[0].end_ms + 1, "overrun"),)
+
+    with pytest.raises(ValueError, match="ASR_SEGMENT_OUTSIDE_VAD"):
+        build_transcript("asset-1", path, ASR())

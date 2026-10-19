@@ -54,6 +54,9 @@ def test_compose_keeps_state_archive_and_ingress_boundaries_separate() -> None:
     assert '\n      - "8000:8000"' not in compose
     assert "cap_drop:" in compose
     assert "no-new-privileges:true" in compose
+    assert 'HOME_VISION_ARCHIVE_AUTO_ENQUEUE: "${HOME_VISION_ARCHIVE_AUTO_ENQUEUE:-false}"' in compose
+    assert 'HOME_VISION_NVR_TIMEZONE_VERIFIED: "${HOME_VISION_NVR_TIMEZONE_VERIFIED:-false}"' in compose
+    assert 'HOME_VISION_NVR_SCAN_INITIAL_DAYS: "${HOME_VISION_NVR_SCAN_INITIAL_DAYS:-60}"' in compose
 
 
 def test_environment_example_contains_no_secret_or_nvr_credentials() -> None:
@@ -64,6 +67,9 @@ def test_environment_example_contains_no_secret_or_nvr_credentials() -> None:
     assert "home_vision_state_dir=" in example
     assert "home_vision_archive_a=" in example
     assert "home_vision_archive_b=" in example
+    assert "home_vision_archive_auto_enqueue=false" in example
+    assert "home_vision_nvr_timezone_verified=false" in example
+    assert "home_vision_nvr_scan_min_date=" in example
 
 
 def test_dockerfile_is_non_root_and_contains_ffmpeg_and_healthcheck() -> None:

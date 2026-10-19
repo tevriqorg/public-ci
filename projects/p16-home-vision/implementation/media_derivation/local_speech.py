@@ -158,7 +158,11 @@ def build_transcript(asset_id: str, wav_path: Path, asr: LocalASR, *, language: 
     regions = detect_speech_regions(wav_path, threshold_rms=vad_threshold_rms)
     segments = asr.transcribe(wav_path, regions) if regions else ()
     for segment in segments:
-        if not any(region.start_ms <= segment.start_ms <= region.end_ms for region in regions):
+        if not any(
+            region.start_ms <= segment.start_ms <= region.end_ms
+            and segment.end_ms <= region.end_ms
+            for region in regions
+        ):
             raise ValueError("ASR_SEGMENT_OUTSIDE_VAD")
     return Transcript(TRANSCRIPT_SCHEMA, asset_id, language, "p16.energy_vad.v1", str(getattr(asr, "backend_id", type(asr).__name__)), segments)
 
