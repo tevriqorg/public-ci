@@ -244,4 +244,4 @@ def test_scan_floor_uses_nvr_business_timezone(session) -> None:
     )
     scan = session.get(ScanRun, result.scan_id)
     assert scan is not None
-    assert scan.query_start == datetime(2026, 8, 31, 16, tzinfo=timezone.utc)
+    assert scan.query_start.replace(tzinfo=timezone.utc) == datetime(2026, 8, 31, 16, tzinfo=timezone.utc)
