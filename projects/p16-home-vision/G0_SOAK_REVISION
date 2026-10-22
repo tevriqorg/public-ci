@@ -1,0 +1,7 @@
+source_repo=tevriqorg/P16-Home-Vision
+source_branch=test/p16r2-vela-15d-soak
+source_commit=2771ae52de8a9ac1874119e0d22abaaffbfb5fc1
+source_parent=feature/p16r2-r2-auto-preservation
+scope=G0_design_only
+copies=design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json;implementation/scripts/vela_g0_validate.py;implementation/scripts/vela_soak_strategy.py;implementation/tests/test_vela_g0_strategy.py
+existing_SOURCE_REVISION_unchanged=true

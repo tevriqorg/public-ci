@@ -1,0 +1,861 @@
+{
+  "schema": "p16.vela-soak.scenario-catalog.v1",
+  "authority": "tevriqorg/P16-Home-Vision#19",
+  "source_branch": "test/p16r2-vela-15d-soak",
+  "design_only": true,
+  "clock": {
+    "timezone": "Asia/Singapore",
+    "time_basis": "UTC_event+business_local_date",
+    "real_days": 15,
+    "start_rule": "first on-host baseline PASS; no retroactive credit",
+    "no_future_fixture": true
+  },
+  "resource_guards": {
+    "host_min_free_bytes": 6442450944,
+    "uat_max_bytes": 536870912,
+    "stop_new_work_on_breach": true,
+    "delete_raw": false
+  },
+  "categories": [
+    "core",
+    "fault",
+    "media",
+    "ui",
+    "safety",
+    "resilience",
+    "learning"
+  ],
+  "requirements": [
+    {
+      "id": "P16-17-1",
+      "authority": "#17 rule 1",
+      "invariant": "Only closed stopped-growing recordings autoqueued by NVR-local midnight"
+    },
+    {
+      "id": "P16-17-2",
+      "authority": "#17 rule 2",
+      "invariant": "All eligible history and per-camera coverage; bounded read-only scans"
+    },
+    {
+      "id": "P16-17-3",
+      "authority": "#17 rule 3",
+      "invariant": "Exactly one verified asset per logical recording"
+    },
+    {
+      "id": "P16-17-4",
+      "authority": "#17 rule 4",
+      "invariant": "Crash-safe verify/download/lease/orphan recovery"
+    },
+    {
+      "id": "P16-17-5",
+      "authority": "#17 rule 5",
+      "invariant": "Read-only bidirectional reconciliation and no destructive auto-repair"
+    },
+    {
+      "id": "P16-17-6",
+      "authority": "#17 rule 6",
+      "invariant": "Archive success decoupled from optional intelligence"
+    },
+    {
+      "id": "P16-11-C",
+      "authority": "#11 Stage C",
+      "invariant": "Media outputs + independently retryable transcript provenance"
+    },
+    {
+      "id": "P16-11-D",
+      "authority": "#11 Stage D",
+      "invariant": "PTS-grounded frame reduce and representative benchmark evidence"
+    },
+    {
+      "id": "P16-11-E",
+      "authority": "#11 Stage E",
+      "invariant": "Versioned immutable package and artifact bytes"
+    },
+    {
+      "id": "P16-9-UI",
+      "authority": "#9 UI",
+      "invariant": "Six-page resource-driven React UI and local updates"
+    },
+    {
+      "id": "P16-19-SAFE",
+      "authority": "#19 safety",
+      "invariant": "Strict Vela UAT-only data and egress scope, human-only RAW deletion"
+    },
+    {
+      "id": "P16-19-OPER",
+      "authority": "#19 operating",
+      "invariant": "15 real days, bounded resources, durable complete per-day evidence"
+    },
+    {
+      "id": "P16-19-LEARN",
+      "authority": "#19 user latest direction",
+      "invariant": "Bug fix->targeted+full regression->new permanent scenario; detect broken tests"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S001",
+      "category": "core",
+      "requirement": "P16-17-1",
+      "title": "每日两摄像头闭日归档",
+      "cadence": "daily",
+      "owner": "p16-auto",
+      "injection": "NVR当天已结算的源、昨天及以前来源、当前日不可下载",
+      "assertion": "closed_sources_verified_and_today_discover_only",
+      "evidence": "archive/scan ledger+file hash",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S001",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S001",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S002",
+      "category": "core",
+      "requirement": "P16-17-1",
+      "title": "跨午夜仍在增长的片段",
+      "cadence": "daily",
+      "owner": "p16-auto",
+      "injection": "将片段起点设为前一天而终点跨入今日",
+      "assertion": "cross_midnight_open_segment_never_enqueued",
+      "evidence": "source_end and archive job audit",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S002",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S002",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S003",
+      "category": "core",
+      "requirement": "P16-17-2",
+      "title": "昨天以前长期回填无遗漏",
+      "cadence": "daily",
+      "owner": "p16-auto",
+      "injection": "跨多日、多个摄像头制造未归档的旧来源",
+      "assertion": "all_eligible_closed_sources_eventually_verified",
+      "evidence": "per camera/day gap table",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S003",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S003",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S004",
+      "category": "core",
+      "requirement": "P16-17-3",
+      "title": "重复扫描不产生重复资产",
+      "cadence": "daily",
+      "owner": "p16-auto",
+      "injection": "相同 source/day 重复搜索和入队两次",
+      "assertion": "single_job_and_verified_asset_per_logical_source",
+      "evidence": "job IDs, asset hashes",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S004",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S004",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S005",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "453 带宽限额退避恢复",
+      "cadence": "daily",
+      "owner": "p16-archive",
+      "injection": "下载首次返回 453，后续恢复",
+      "assertion": "bounded_backoff_and_single_verified_asset",
+      "evidence": "attempt timestamps/errors",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S005",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S005",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S006",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "下载中断和损坏的 part",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "分段下载截断、损坏、半写临时文件",
+      "assertion": "partial_quarantined_without_overwriting_verified",
+      "evidence": "quarantine manifest",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S006",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S006",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S007",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "原子提升后 DB 提交前强杀",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "final 文件落盘但 DB 未提交时 SIGKILL",
+      "assertion": "valid_promoted_file_adopted_without_redownload",
+      "evidence": "before/after hashes+download count",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S007",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S007",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S008",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "原卷失联后跨卷 orphan 修复",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "卷 A 保留有效 final，卷 B 被选为新写入目标",
+      "assertion": "cross_volume_orphan_adopted_without_duplication",
+      "evidence": "multi-volume audit",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S008",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S008",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S009",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "stale lease/restart/watchdog",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "worker 强杀、lease 过期和自动恢复",
+      "assertion": "no_stuck_claim_and_exactly_one_success_asset",
+      "evidence": "lease timeline+worker heartbeat",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S009",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S009",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S010",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "401 和非法 Digest",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "丢失认证、错误 nonce",
+      "assertion": "failed_closed_no_unverified_media",
+      "evidence": "auth error counters redacted",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S010",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S010",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S011",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "5xx、超时和断网",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "搜索中断和下载中断",
+      "assertion": "bounded_retry_then_recovery_without_duplicate",
+      "evidence": "retry event log",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S011",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S011",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S012",
+      "category": "fault",
+      "requirement": "P16-17-5",
+      "title": "数据库文件双向对账",
+      "cadence": "daily",
+      "owner": "p16-audit",
+      "injection": "制造 DB-only、file-only、deleted-but-file-present",
+      "assertion": "all_mismatches_reported_no_destructive_repair",
+      "evidence": "reconciliation findings",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S012",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S012",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S013",
+      "category": "fault",
+      "requirement": "P16-17-5",
+      "title": "可用空间和写入权限骤变",
+      "cadence": "rotation",
+      "owner": "p16-audit",
+      "injection": "模拟零空间、volume offline、EACCES",
+      "assertion": "fail_closed_without_deleting_or_touching_others",
+      "evidence": "resource guard+audit",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S013",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S013",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S014",
+      "category": "fault",
+      "requirement": "P16-17-5",
+      "title": "局部 camera 扫描失败隔离",
+      "cadence": "rotation",
+      "owner": "p16-auto",
+      "injection": "camera 102 连续扫描失败，101 保持稳定",
+      "assertion": "stable_camera_not_blocked_by_other_camera_failure",
+      "evidence": "camera-scoped scan/queue logs",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S014",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S014",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S015",
+      "category": "fault",
+      "requirement": "P16-17-2",
+      "title": "NVR 查询乱序影响稳定指纹",
+      "cadence": "rotation",
+      "owner": "p16-auto",
+      "injection": "同一 source 集合变更返回顺序",
+      "assertion": "same_set_same_stability_hash",
+      "evidence": "scan response hash comparison",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S015",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S015",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S016",
+      "category": "fault",
+      "requirement": "P16-17-2",
+      "title": "老录像扫描查询预算",
+      "cadence": "daily",
+      "owner": "p16-auto",
+      "injection": "同一历史窗口已扫描；auto-enqueue disabled",
+      "assertion": "no_repeated_completed_history_scan_storm",
+      "evidence": "requests per camera/day",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S016",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S016",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S017",
+      "category": "fault",
+      "requirement": "P16-17-3",
+      "title": "并发入队与双 worker claim",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "两 worker/相同源并发竞争 SQLite",
+      "assertion": "single_claim_and_single_durable_asset",
+      "evidence": "SQLite constraints+job audit",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S017",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S017",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S018",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "SQLite busy/失败事务与迁移",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "写锁冲突、事务 rollback、schema migration",
+      "assertion": "no_canonical_loss_and_recovery_to_consistency",
+      "evidence": "schema+ledger diff",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S018",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S018",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S019",
+      "category": "media",
+      "requirement": "P16-11-C",
+      "title": "HEVC H265/PCM 和 MP4 路径",
+      "cadence": "rotation",
+      "owner": "p16-media",
+      "injection": "多容器/编码短样本与兼容音频",
+      "assertion": "stream_copy_or_explicit_compat_transcode_preserves_pts",
+      "evidence": "ffprobe codec+PTS map",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S019",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S019",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S020",
+      "category": "media",
+      "requirement": "P16-11-C",
+      "title": "本地 ASR 错误仅重试 transcript",
+      "cadence": "rotation",
+      "owner": "p16-media",
+      "injection": "ASR command timeout/invalid segments",
+      "assertion": "media_state_stays_derived_and_transcript_retry_isolated",
+      "evidence": "stage state+hashes",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S020",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S020",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S021",
+      "category": "media",
+      "requirement": "P16-11-C",
+      "title": "ASR provenance 完整",
+      "cadence": "rotation",
+      "owner": "p16-media",
+      "injection": "同 basename wrapper 切换模型 revision",
+      "assertion": "model_pipeline_version_distinguishable",
+      "evidence": "transcript provenance",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S021",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S021",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S022",
+      "category": "media",
+      "requirement": "P16-11-D",
+      "title": "PTS Frame Reduce 选帧",
+      "cadence": "rotation",
+      "owner": "p16-media",
+      "injection": "非整数 FPS+变帧间隔+静态/运动切换",
+      "assertion": "selected_frames_match_source_pts_and_identity",
+      "evidence": "frame manifests+benchmark metrics",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S022",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S022",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S023",
+      "category": "media",
+      "requirement": "P16-11-E",
+      "title": "不可变 Analysis Package 后续 transcript 改动",
+      "cadence": "rotation",
+      "owner": "p16-media",
+      "injection": "产出 package 后 transcript retry 更改原路径",
+      "assertion": "published_package_artifact_bytes_immutable",
+      "evidence": "package sha+revalidation",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S023",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S023",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S024",
+      "category": "ui",
+      "requirement": "P16-9-UI",
+      "title": "React 六页路由状态覆盖",
+      "cadence": "rotation",
+      "owner": "p16-ui",
+      "injection": "各页面导航+任务状态更新",
+      "assertion": "six_pages_display_backend_truth_without_full_reload",
+      "evidence": "browser trace+screenshots",
+      "severity": "P2",
+      "seed": "p16-g0-v1-S024",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S024",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S025",
+      "category": "ui",
+      "requirement": "P16-9-UI",
+      "title": "播放中局部进度和失败提示",
+      "cadence": "rotation",
+      "owner": "p16-ui",
+      "injection": "切换 68%->69% 并在播放时出现 worker 错误",
+      "assertion": "playback_stays_and_error_visible",
+      "evidence": "playwright state assertions",
+      "severity": "P2",
+      "seed": "p16-g0-v1-S025",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S025",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S026",
+      "category": "safety",
+      "requirement": "P16-19-SAFE",
+      "title": "隔离与禁止真实端点",
+      "cadence": "daily",
+      "owner": "p16-safety",
+      "injection": "非法远程 endpoint/env 注入+非 loopback 地址",
+      "assertion": "runtime_refuses_real_endpoints_or_insecure_bind",
+      "evidence": "socket+config audits",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S026",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S026",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S027",
+      "category": "safety",
+      "requirement": "P16-19-SAFE",
+      "title": "禁止 RAW 自动删除和秘密泄露",
+      "cadence": "daily",
+      "owner": "p16-safety",
+      "injection": "模拟清理策略/敏感配置注入",
+      "assertion": "no_raw_delete_and_no_secret_in_log_or_git",
+      "evidence": "filesystem+redaction scanner",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S027",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S027",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S028",
+      "category": "resilience",
+      "requirement": "P16-19-OPER",
+      "title": "定时缺失与掉电补跑",
+      "cadence": "daily",
+      "owner": "p16-runner",
+      "injection": "timer missed window/VM reboot+重复启动",
+      "assertion": "one_writer_no_false_pass_and_missed_day_ledger",
+      "evidence": "systemd status+daily digest",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S028",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S028",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S029",
+      "category": "resilience",
+      "requirement": "P16-19-OPER",
+      "title": "Vela 资源争用保护",
+      "cadence": "daily",
+      "owner": "p16-runner",
+      "injection": "低磁盘/CPU/RSS/IO 压力并观察其他服务",
+      "assertion": "guard_stops_new_work_and_other_services_unchanged",
+      "evidence": "host metrics+container baseline",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S029",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S029",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S030",
+      "category": "learning",
+      "requirement": "P16-19-LEARN",
+      "title": "P16 bug 自动固化回归",
+      "cadence": "rotation",
+      "owner": "p16-learning",
+      "injection": "新 Bug minimal reproducer → fixing PR → adjacent variants",
+      "assertion": "failing_repro_then_fix_targeted_full_and_followup_pass",
+      "evidence": "issue/PR/CI/version map",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S030",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S030",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S031",
+      "category": "learning",
+      "requirement": "P16-19-LEARN",
+      "title": "已知变异体反向检测",
+      "cadence": "daily",
+      "owner": "p16-learning",
+      "injection": "模拟 future-video/incorrect-hash/duplicate/early-enqueue",
+      "assertion": "canaries_fail_before_real_day_is_credited",
+      "evidence": "mutant-kill matrix",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S031",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S031",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S032",
+      "category": "resilience",
+      "requirement": "P16-19-OPER",
+      "title": "15 日历史状态漂移与统计",
+      "cadence": "daily",
+      "owner": "p16-runner",
+      "injection": "重检所有历史源、文件、旧失败、源版本",
+      "assertion": "full_history_verified_no_overwritten_evidence",
+      "evidence": "day-index+SHA chain+p95 sampling",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S032",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S032",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S033",
+      "category": "fault",
+      "requirement": "P16-17-4",
+      "title": "错误 XML/无视频被拒收",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "ISAPI XML error content disguised as success and ffprobe invalid media",
+      "assertion": "no_verified_asset_from_invalid_payload",
+      "evidence": "probe+reject log",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S033",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S033",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S034",
+      "category": "fault",
+      "requirement": "P16-17-1",
+      "title": "时区、UTC 转换、NVR floor",
+      "cadence": "daily",
+      "owner": "p16-auto",
+      "injection": "模拟 Asia/Singapore 23:59 和 00:00 + UTC date floor",
+      "assertion": "closed_day_cutoff_utc_correct_no_early_queue",
+      "evidence": "time oracle comparisons",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S034",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S034",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S035",
+      "category": "media",
+      "requirement": "P16-11-D",
+      "title": "长媒体有界性能与内存行为",
+      "cadence": "rotation",
+      "owner": "p16-media",
+      "injection": "多分钟视频+有界源行为、transcript大段音频",
+      "assertion": "bounded_memory_and_valid_pts_under_load",
+      "evidence": "peak RSS+cpu+ffprobe",
+      "severity": "P1",
+      "seed": "p16-g0-v1-S035",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S035",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    },
+    {
+      "id": "S036",
+      "category": "fault",
+      "requirement": "P16-17-6",
+      "title": "Intelligence 失败不阻塞归档",
+      "cadence": "rotation",
+      "owner": "p16-archive",
+      "injection": "模拟 ASR/Reduce/Package 错误/超时",
+      "assertion": "archive_remains_verified_despite_optional_intelligence_failure",
+      "evidence": "independent stage timeline",
+      "severity": "P0",
+      "seed": "p16-g0-v1-S036",
+      "replay": {
+        "command": "p16-soak scenario",
+        "scenario_id": "S036",
+        "mode": "isolated-synthetic"
+      },
+      "on_failure": "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION"
+    }
+  ],
+  "learning": {
+    "classification": [
+      "product_bug",
+      "harness_bug",
+      "environment",
+      "flaky",
+      "unknown"
+    ],
+    "artifacts": [
+      "observation",
+      "minimal_reproducer",
+      "root_cause",
+      "issue_or_PR",
+      "targeted_regression",
+      "full_regression",
+      "vela_recheck",
+      "new_permanent_scenario",
+      "three_day_watch"
+    ],
+    "no_auto_adjust_ground_truth": true,
+    "no_unreviewed_code_merge": true,
+    "unknown_is_failure": true,
+    "risk_priority": "severity*recurrence*blast_radius*oracle_gap; tie by first_seen",
+    "budget_per_day": {
+      "mandatory_safety": 1,
+      "prior_defects": 1,
+      "rotating_faults": 3,
+      "new_adjacent_variants_max": 3
+    },
+    "canaries": [
+      {
+        "id": "C1",
+        "mutant": "archive current day",
+        "detect_by": "S001"
+      },
+      {
+        "id": "C2",
+        "mutant": "archive bad sha",
+        "detect_by": "S012"
+      },
+      {
+        "id": "C3",
+        "mutant": "duplicate source asset",
+        "detect_by": "S004"
+      },
+      {
+        "id": "C4",
+        "mutant": "future recording visible",
+        "detect_by": "S034"
+      },
+      {
+        "id": "C5",
+        "mutant": "disable other-camera isolation",
+        "detect_by": "S014"
+      },
+      {
+        "id": "C6",
+        "mutant": "mutable package artifact",
+        "detect_by": "S023"
+      }
+    ]
+  },
+  "out_of_scope": [
+    {
+      "area": "production NVR/OMV cutover",
+      "status": "PROHIBITED"
+    },
+    {
+      "area": "P2/P20/Hermes/real household media",
+      "status": "PROHIBITED"
+    },
+    {
+      "area": "Long-term memory, real face recognition, unbuilt remote AI",
+      "status": "NOT_IMPLEMENTED"
+    },
+    {
+      "area": "Real HEVC/household hardware performance confidence",
+      "status": "REQUIRES_REAL_MEDIA_LATER"
+    }
+  ]
+}
