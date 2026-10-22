@@ -1,0 +1,40 @@
+name: P16 G0 adaptive soak design validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/p16-g0-soak-review.yml"
+      - "projects/p16-home-vision/G0_SOAK_REVISION"
+      - "projects/p16-home-vision/design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json"
+      - "projects/p16-home-vision/implementation/scripts/vela_g0_validate.py"
+      - "projects/p16-home-vision/implementation/scripts/vela_soak_strategy.py"
+      - "projects/p16-home-vision/implementation/tests/test_vela_g0_strategy.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p16-g0-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  design:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify source mapping
+        run: |
+          cat projects/p16-home-vision/G0_SOAK_REVISION
+          grep -Eq '^source_commit=[0-9a-f]{40}$' projects/p16-home-vision/G0_SOAK_REVISION
+          grep -Fxq 'scope=G0_design_only' projects/p16-home-vision/G0_SOAK_REVISION
+      - name: G0 reject unsafe catalog mutations
+        working-directory: projects/p16-home-vision
+        run: python implementation/scripts/vela_g0_validate.py design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json --selfcheck
+      - name: G0 adaptive test strategy
+        working-directory: projects/p16-home-vision
+        run: python -m unittest discover -s implementation/tests -p 'test_vela_g0_strategy.py' -v
