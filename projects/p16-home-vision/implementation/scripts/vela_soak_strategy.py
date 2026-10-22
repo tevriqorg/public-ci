@@ -73,6 +73,9 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) ->
     bug_ids = [bug["id"] for bug in incidents]
     if len(bug_ids) != len(set(bug_ids)):
         raise ValueError("DUPLICATE_BUG_IDS")
+    catalog_ids = {s["id"] for s in catalog["scenarios"]}
+    if any(sid not in catalog_ids for bug in incidents for sid in bug["scenario_ids"]):
+        raise ValueError("UNKNOWN_SCENARIO_ORACLE")
     scenarios = {s["id"]: s for s in catalog["scenarios"]}
     mandatory = sorted(s["id"] for s in scenarios.values() if s["cadence"] == "daily")
     rotating = sorted(s["id"] for s in scenarios.values() if s["cadence"] == "rotation")

@@ -123,6 +123,12 @@ class G0StrategyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "INVALID_INCIDENT"):
             plan(CATALOG, first_day=T0, day=T0, incidents=[{}])
 
+    def test_unknown_scenario_never_escapes_after_three_days(self):
+        bug=incident(status="fixed", fixed_date="2026-10-24", fix_sha="deadbeef",
+                     targeted_pass_evidence="sha256:" + "f"*64, scenario_ids=["S999"])
+        with self.assertRaisesRegex(ValueError, "UNKNOWN_SCENARIO_ORACLE"):
+            plan(CATALOG, first_day=T0, day=T0+timedelta(days=4), incidents=[bug])
+
     def test_catalog_tampering_and_output_serialization(self):
         import copy
         bad = copy.deepcopy(CATALOG)
