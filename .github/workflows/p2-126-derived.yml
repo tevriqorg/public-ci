@@ -1,0 +1,22 @@
+name: P2 126 derived identity regression
+on:
+  pull_request:
+    paths: ['.github/workflows/p2-126-derived.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  derived-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: tevriqorg/WeKnora
+          ref: 81415222a07cd9cfb60f8a1cb3e40253e18983e9
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+      - name: Source identity and revision regression
+        run: go test ./internal/application/service -run 'TestDerived' -count=1 -v
