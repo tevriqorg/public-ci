@@ -74,7 +74,7 @@ def inspect(catalog):
     require({f"S{i:03}" for i in range(1, 37)} <= scenario_ids, "FROZEN_SCENARIOS_MISSING")
     daily = {"S001", "S002", "S003", "S004", "S005", "S012", "S016", "S026",
              "S027", "S028", "S029", "S031", "S032", "S034"}
-    require(daily <= {s.get("id") for s in scenarios if isinstance(s, dict) and s.get("cadence") == "daily"},
+    require(daily == {s.get("id") for s in scenarios if isinstance(s, dict) and s.get("cadence") == "daily"},
             "DAILY_SAFETY_WEAKENED")
     require(MANDATORY_REQUIRES <= covered, "UNCOVERED_REQUIREMENTS")
     require(REQUIRED_CATEGORIES <= seen_categories, "UNCOVERED_CATEGORIES")
@@ -104,6 +104,7 @@ def selfcheck(catalog):
     """Mutation smoke: validator must reject material design mistakes."""
     changes = [
         ("MISSING_CRITICAL_SCENE", lambda c: c.update(scenarios=[s for s in c["scenarios"] if s["id"] != "S007"])),
+        ("EXPANDED_DAILY", lambda c: c["scenarios"][5].update(cadence="daily")),
         ("WEAKENED_DAILY", lambda c: c["scenarios"][0].update(cadence="rotation")),
         ("FUTURE_FIXTURE", lambda c: c["clock"].update(no_future_fixture=False)),
         ("NO_FIX_LOOP", lambda c: c["scenarios"][0].update(on_failure="retry_until_green")),

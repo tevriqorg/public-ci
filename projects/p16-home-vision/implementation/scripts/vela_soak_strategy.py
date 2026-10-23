@@ -57,9 +57,14 @@ def _incident_priority(bug: dict) -> tuple:
             -min(10, bug.get("blast_radius", 1)), bug["id"])
 
 
-def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) -> dict:
+def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict],
+         watch_until: date | None = None, extension_evidence: str | None = None) -> dict:
     """Produce schedule with non-displaceable mandatory and rotation slots."""
-    if day < first_day or day >= first_day + timedelta(days=15):
+    if day < first_day:
+        raise ValueError("OUTSIDE_FROZEN_15D_WINDOW")
+    extension = day >= first_day + timedelta(days=15)
+    if extension and (watch_until is None or day > watch_until or
+                      not isinstance(extension_evidence, str) or not HASH.fullmatch(extension_evidence)):
         raise ValueError("OUTSIDE_FROZEN_15D_WINDOW")
     if catalog.get("schema") != "p16.vela-soak.scenario-catalog.v1":
         raise ValueError("UNAPPROVED_CATALOG")
@@ -107,7 +112,7 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) ->
                 blockers.append({"bug": bug["id"], "reason": "FIX_LOOP_INCOMPLETE"})
                 continue
             fixed_day = date.fromisoformat(bug["fixed_date"])
-            if not fixed_day <= day < fixed_day + timedelta(days=3):
+            if not fixed_day <= day <= fixed_day + timedelta(days=3):
                 continue
         for sid in bug.get("scenario_ids", []):
             if sid not in scenarios:
@@ -127,6 +132,10 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) ->
     return {"schema": SCHEMA, "catalog_sha256": _sha(catalog),
             "incident_set_sha256": _sha(incidents), "day_sgt": day.isoformat(),
             "window_start_sgt": first_day.isoformat(), "date_offset": day_idx,
+            "phase": "clean_watch_extension" if extension else "baseline_15d",
+            "baseline_end_sgt": (first_day + timedelta(days=14)).isoformat(),
+            "extension_until_sgt": watch_until.isoformat() if extension else None,
+            "extension_evidence": extension_evidence if extension else None,
             "mandatory": mandatory, "rotation": rotation, "adaptive": additions,
             "adaptive_pending": pending,
             "scenario_ids": selected, "blockers": blockers,
@@ -142,10 +151,13 @@ def main():
     p.add_argument("--start", required=True, type=date.fromisoformat)
     p.add_argument("--day", required=True, type=date.fromisoformat)
     p.add_argument("--incidents", type=Path)
+    p.add_argument("--watch-until", type=date.fromisoformat)
+    p.add_argument("--extension-evidence")
     options = p.parse_args()
     catalog = json.loads(options.catalog.read_text(encoding="utf-8"))
     bugs = json.loads(options.incidents.read_text(encoding="utf-8")) if options.incidents else []
-    print(json.dumps(plan(catalog, first_day=options.start, day=options.day, incidents=bugs),
+    print(json.dumps(plan(catalog, first_day=options.start, day=options.day, incidents=bugs,
+                     watch_until=options.watch_until, extension_evidence=options.extension_evidence),
                      indent=2, ensure_ascii=False, sort_keys=True))
 
 

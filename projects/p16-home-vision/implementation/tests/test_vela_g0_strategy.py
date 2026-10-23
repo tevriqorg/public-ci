@@ -54,10 +54,10 @@ class G0StrategyTests(unittest.TestCase):
     def test_fixed_bug_gets_three_days_of_targeted_tests(self):
         bug = incident(status="fixed", fixed_date="2026-10-24",
                        fix_sha="deadbeef", targeted_pass_evidence="sha256:" + "f" * 64)
-        for i in range(3):
+        for i in range(4):
             p = plan(CATALOG, first_day=T0, day=T0+timedelta(days=i),incidents=[bug])
             self.assertIn("S019", p["scenario_ids"])
-        p = plan(CATALOG, first_day=T0, day=T0+timedelta(days=3),incidents=[bug])
+        p = plan(CATALOG, first_day=T0, day=T0+timedelta(days=4),incidents=[bug])
         self.assertNotIn("S019", p["adaptive"])
 
     def test_fake_fix_is_not_accepted(self):
@@ -153,7 +153,7 @@ class G0StrategyTests(unittest.TestCase):
         self.assertIn("S019",p["adaptive"])
         self.assertIn("proposal_sha256",p["new_case_proposals"][0])
         self.assertNotIn("SENSITIVE_UNREVIEWED_TEST_SOURCE",json.dumps(p))
-        p3=plan(CATALOG,first_day=T0,day=T0+timedelta(days=3),incidents=[bug])
+        p3=plan(CATALOG,first_day=T0,day=T0+timedelta(days=4),incidents=[bug])
         self.assertNotIn("S019",p3["adaptive"])
 
     def test_fixed_bug_cannot_age_out_with_incomplete_loop(self):
@@ -173,6 +173,31 @@ class G0StrategyTests(unittest.TestCase):
         p = plan(CATALOG, first_day=T0, day=T0, incidents=bugs)
         self.assertEqual([x["scenario_id"] for x in p["adaptive_pending"]], ["S022", "S023"])
         self.assertEqual(p["gate_to_run"], "HOLD_AFFECTED_WORK")
+
+    def test_late_fix_clean_watch_extension_preserves_baseline(self):
+        fixed = T0 + timedelta(days=14)
+        bug = incident(status="observing", fixed_date=fixed.isoformat(), fix_sha="deadbeef",
+                       targeted_pass_evidence="sha256:"+"f"*64)
+        for offset in (15, 16, 17):
+            p = plan(CATALOG, first_day=T0, day=T0+timedelta(days=offset), incidents=[bug],
+                     watch_until=T0+timedelta(days=17), extension_evidence="sha256:"+"e"*64)
+            self.assertEqual(p["phase"], "clean_watch_extension")
+            self.assertEqual(p["baseline_end_sgt"], fixed.isoformat())
+            self.assertEqual(p["window_start_sgt"], T0.isoformat())
+            self.assertIn("S019", p["scenario_ids"])
+            self.assertEqual(len(p["mandatory"]), 14)
+        for until, evidence in ((None, None), (T0+timedelta(days=16), "sha256:"+"e"*64),
+                                (T0+timedelta(days=17), "fake")):
+            with self.assertRaisesRegex(ValueError, "OUTSIDE"):
+                plan(CATALOG, first_day=T0, day=T0+timedelta(days=17), incidents=[bug],
+                     watch_until=until, extension_evidence=evidence)
+
+    def test_rotation_cannot_be_promoted_to_daily(self):
+        import copy
+        changed = copy.deepcopy(CATALOG)
+        next(s for s in changed["scenarios"] if s["cadence"] == "rotation")["cadence"] = "daily"
+        with self.assertRaisesRegex(ValueError, "UNAPPROVED_CATALOG_INVALID"):
+            plan(changed, first_day=T0, day=T0, incidents=[])
 
     def test_idempotent_plan_no_file_writes(self):
         p1 = plan(CATALOG,first_day=T0,day=T0,incidents=[incident()])
