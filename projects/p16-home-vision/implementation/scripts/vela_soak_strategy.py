@@ -103,16 +103,17 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict],
             new_case_proposals.append({"bug": bug["id"], "proposal_sha256": _sha(bug["new_case_proposal"]),
                                        "status": "REVIEW_REQUIRED_NOT_EXECUTABLE"})
         if bug.get("status") in ("fixed", "observing"):
+            closure_complete = True
             if not isinstance(bug.get("fix_sha"), str) or not COMMIT.fullmatch(bug["fix_sha"]) or not isinstance(bug.get("targeted_pass_evidence"), str) or not HASH.fullmatch(bug["targeted_pass_evidence"]):
                 blockers.append({"bug": bug["id"], "reason": "FIX_NOT_VERIFIED"})
-                continue
+                closure_complete = False
             required = ("full_regression_evidence", "public_ci_evidence", "review_evidence",
                         "permanent_regression_evidence", "adjacent_pass_evidence")
             if any(not isinstance(bug.get(k), str) or not HASH.fullmatch(bug[k]) for k in required):
                 blockers.append({"bug": bug["id"], "reason": "FIX_LOOP_INCOMPLETE"})
-                continue
+                closure_complete = False
             fixed_day = date.fromisoformat(bug["fixed_date"])
-            if not fixed_day <= day <= fixed_day + timedelta(days=3):
+            if closure_complete and not fixed_day <= day <= fixed_day + timedelta(days=3):
                 continue
         for sid in bug.get("scenario_ids", []):
             if sid not in scenarios:
@@ -140,7 +141,7 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict],
             "adaptive_pending": pending,
             "scenario_ids": selected, "blockers": blockers,
             "new_case_proposals": new_case_proposals,
-            "evidence_requirement": "record all failures and original SHA; never overwrite PASS",
+            "evidence_requirement": "never overwrite original FAIL evidence or any prior run; append linked recovery runs with original SHA",
             "gate_to_run": "HOLD_AFFECTED_WORK" if blockers else "TEST_PLAN_ONLY",
             "mutations_executed": False}
 

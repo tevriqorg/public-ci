@@ -199,6 +199,24 @@ class G0StrategyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "UNAPPROVED_CATALOG_INVALID"):
             plan(changed, first_day=T0, day=T0, incidents=[])
 
+    def test_incomplete_fix_remains_targeted_while_acceptance_held(self):
+        for missing in ("fix_sha", "targeted_pass_evidence", "full_regression_evidence",
+                        "public_ci_evidence", "review_evidence", "permanent_regression_evidence",
+                        "adjacent_pass_evidence"):
+            bug = incident(status="observing", fixed_date=T0.isoformat(), fix_sha="deadbeef",
+                           targeted_pass_evidence="sha256:"+"f"*64)
+            del bug[missing]
+            for offset in (0, 4):
+                with self.subTest(missing=missing, offset=offset):
+                    p = plan(CATALOG, first_day=T0, day=T0+timedelta(days=offset), incidents=[bug])
+                    self.assertEqual(p["gate_to_run"], "HOLD_AFFECTED_WORK")
+                    self.assertIn("S019", p["scenario_ids"])
+
+    def test_original_failure_evidence_is_explicitly_immutable(self):
+        p = plan(CATALOG, first_day=T0, day=T0, incidents=[])
+        self.assertIn("never overwrite original FAIL evidence", p["evidence_requirement"])
+        self.assertIn("append linked recovery runs", p["evidence_requirement"])
+
     def test_idempotent_plan_no_file_writes(self):
         p1 = plan(CATALOG,first_day=T0,day=T0,incidents=[incident()])
         p2 = plan(CATALOG,first_day=T0,day=T0,incidents=[incident()])
