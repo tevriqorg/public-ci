@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: tevriqorg/WeKnora
-          ref: 691e1ba67e06108e0ce895c3b53a409ae0ad508e
+          ref: 88498aeb6947e78e4d2fc1707a9a2effb65822eb
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
@@ -31,9 +31,37 @@ jobs:
         run: |
           mkdir -p dist
           go build -o dist/weknora-server ./cmd/server
+          jieba_module="$(go list -m -f '{{.Dir}}' github.com/yanyiwu/gojieba)"
+          cp -a "$jieba_module/deps/cppjieba/dict" dist/jieba
+          cp "$jieba_module/LICENSE" dist/JIEBA_LICENSE
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/
           git rev-parse HEAD > dist/SOURCE_REVISION
           cd dist
-          sha256sum weknora-server SOURCE_REVISION > SHA256SUMS
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Relocated artifact startup without build-host dictionary
+        shell: bash
+        run: |
+          set -euo pipefail
+          relocated="$RUNNER_TEMP/p2-126-relocated"
+          mkdir -p "$relocated"
+          cp -a dist/. "$relocated/"
+          jieba_module="$(go list -m -f '{{.Dir}}' github.com/yanyiwu/gojieba)"
+          dict="$jieba_module/deps/cppjieba/dict"
+          chmod u+w "$(dirname "$dict")"
+          mv "$dict" "$dict.artifact-smoke-hidden"
+          trap 'mv "$dict.artifact-smoke-hidden" "$dict"' EXIT
+          export P2_RELOCATED_ARTIFACT="$relocated"
+          python3 - <<'PYSMOKE'
+          import os,pathlib,subprocess
+          root=pathlib.Path(os.environ['P2_RELOCATED_ARTIFACT'])
+          subprocess.run(['sha256sum','--check','SHA256SUMS'],cwd=root,check=True)
+          env=dict(os.environ,JIEBA_DICT_DIR=str(root/'jieba'),WEKNORA_RUNTIME_ROLE='artifact_smoke_invalid')
+          r=subprocess.run([str(root/'weknora-server')],cwd=root,env=env,capture_output=True,timeout=30)
+          output=r.stdout+r.stderr
+          assert r.returncode!=0 and b'Invalid runtime configuration' in output, output[-2000:]
+          assert b'Dictionary file does not exist' not in output
+          print('Relocated startup reached main without build-host dictionary; expected role rejection passed')
+          PYSMOKE
       - uses: actions/upload-artifact@v6
         with:
           name: p2-126-weknora-server
