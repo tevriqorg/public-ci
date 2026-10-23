@@ -95,3 +95,44 @@ def test_cli_initializes_settings_before_watcher_loop(monkeypatch) -> None:
     assert scan_nvr.main() == 0
     assert seen[0] is settings
     assert seen[1]["start_day"] == date(2026, 8, 24)
+
+
+def test_single_camera_failure_does_not_block_stable_peer(session, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from datetime import datetime, timedelta, timezone
+    from pydantic import SecretStr
+    from sqlalchemy import select
+    from app.models import NvrDevice, CameraTrack, ArchiveJob
+    from app.infra.nvr.hikvision import DiscoveredSegment, NvrProtocolError
+    from scripts import scan_nvr
+
+    today = datetime.now(timezone.utc).date()
+    day = today - timedelta(days=1)
+    start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=1)
+    nvr = NvrDevice(id="nvr-camera-isolation", name="SYNTHETIC", host="127.0.0.1", timezone="UTC")
+    session.add(nvr)
+    session.flush()
+    for track in ("101", "102"):
+        session.add(CameraTrack(id="isolation-"+track, nvr_id=nvr.id, track_id=track, camera_name="Synthetic"))
+    session.commit()
+    settings = SimpleNamespace(nvr_base_url="http://127.0.0.1", nvr_username="fixture",
+        nvr_password=SecretStr("fixture"), nvr_scan_min_date=None, nvr_tracks=None,
+        nvr_id=nvr.id, archive_auto_enqueue=True, nvr_timezone_verified=True)
+    class Searcher:
+        def search_history(self, xml):
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(xml)
+            track = next(e.text for e in root.iter() if e.tag.rsplit("}",1)[-1]=="trackID")
+            if track == "102":
+                raise NvrProtocolError("NVR_HTTP_ERROR")
+            return [DiscoveredSegment("101", start, start+timedelta(minutes=3), 180000,
+                                      "synthetic-fingerprint", "http://127.0.0.1/fixture")]
+    monkeypatch.setattr(scan_nvr, "get_settings", lambda:settings)
+    monkeypatch.setattr(scan_nvr, "SessionLocal", lambda:nullcontext(session))
+    monkeypatch.setattr(scan_nvr, "HikvisionIsapiClient", lambda **kw:nullcontext(Searcher()))
+    for _ in range(2):
+        assert scan_nvr.scan_once(start_day=day, end_day=day) == 1
+    jobs = list(session.scalars(select(ArchiveJob)))
+    assert len(jobs) == 1
+    assert jobs[0].state == "queued"
