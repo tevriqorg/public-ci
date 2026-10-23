@@ -94,6 +94,8 @@ jobs:
                       assert r.returncode==2 and d['result']=='PRECHECK_BLOCKED_L2_SUBSET' and d['formal_soak_started'] is False,(script,r.returncode,d)
                   elif script.name=='issue126_canary_l3_worker_restart.py':
                       assert r.returncode==2 and d['result']=='PRECHECK_BLOCKED_L3_CLONE_ONLY' and d['formal_soak_started'] is False,(script,r.returncode,d)
+                  elif script.name=='issue126_canary_backup_restore.py':
+                      assert r.returncode==2 and d['result']=='PRECHECK_BLOCKED_CLONE_BACKUP_RESTORE' and d['formal_soak_started'] is False,(script,r.returncode,d)
                   else:
                       assert r.returncode==1 and d['result'].startswith('FAIL_CANARY'),(script,r.returncode,d)
                   print(script.name+': missing private state rejected; no PASS fabricated')
