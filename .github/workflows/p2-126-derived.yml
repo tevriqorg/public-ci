@@ -25,6 +25,7 @@ jobs:
         run: go test ./internal/application/service -run 'TestDerived' -count=1 -timeout=120s -v
       - name: Full affected-domain regression
         run: |
+          gofmt -d internal/handler/knowledge_derived*.go
           test -z "$(gofmt -l internal/types/derived_knowledge*.go internal/application/service/derived_knowledge*.go internal/application/service/manual_source_revision.go internal/handler/knowledge_derived*.go)"
           go test ./internal/types ./internal/application/service ./internal/application/repository ./internal/handler ./internal/router -count=1 -timeout=5m
       - name: Build exact server artifact
