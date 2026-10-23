@@ -78,7 +78,8 @@ class L1SoakEvidence(unittest.TestCase):
             if "/chunks/" in url:
                 return {"success":True,"data":[{"text":"RFC 9110"}]}
             return {"success":True,"data":{"id":kid,"knowledge_base_id":kb}}
-        with patch.dict(os.environ, {"P2_SOAK_GATE_KEY_FILE":str(self.key)}):
+        with patch("business_probe.verify_formal_runtime", return_value=True), patch.dict(
+                os.environ, {"P2_SOAK_GATE_KEY_FILE":str(self.key)}):
             ok = business_run(self.root, profile_path, token, transport=mock)
         self.assertEqual(ok["result"],"PASS")
         self.assertEqual(ok["mode"],"soak")
@@ -94,7 +95,8 @@ class L1SoakEvidence(unittest.TestCase):
         self.assertEqual(out["l1_slots"],0, "insecure evidence must fail closed")
         profile["knowledge"][0]["expected_phrase"] = "tampered"
         profile_path.write_text(json.dumps(profile))
-        with patch.dict(os.environ, {"P2_SOAK_GATE_KEY_FILE":str(self.key)}):
+        with patch("business_probe.verify_formal_runtime", return_value=True), patch.dict(
+                os.environ, {"P2_SOAK_GATE_KEY_FILE":str(self.key)}):
             bad = business_run(self.root, profile_path, token, transport=mock)
         self.assertEqual(bad["result"],"FAIL")
 

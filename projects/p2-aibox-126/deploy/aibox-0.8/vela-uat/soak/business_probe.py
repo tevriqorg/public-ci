@@ -102,6 +102,32 @@ def knowledge_case(profile, token, transport=None):
     return results
 
 
+def verify_formal_runtime(state_dir: Path, gate: dict):
+    """Require real #126 API/worker, port owner, clone isolation and exact binary.
+
+    This is separate from the signed Gate: an approved commit/digest cannot
+    attest that the currently listening process actually runs that artifact.
+    """
+    import importlib.util
+    state_dir = Path(state_dir)
+    if (state_dir.is_symlink() or state_dir.name != "soak-126"
+            or state_dir.parent.name != "live-126"):
+        raise ValueError("formal L1 state is outside dedicated canary")
+    guard_path = Path(__file__).resolve().parents[4] / "scripts" / "p2_canary_guard.py"
+    if not guard_path.is_file() or guard_path.is_symlink():
+        raise ValueError("exact canary runtime guard unavailable")
+    spec = importlib.util.spec_from_file_location("p2_issue126_runtime_guard", guard_path)
+    if spec is None or spec.loader is None:
+        raise ValueError("canary runtime guard cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    runtime = module.verify_live_canary(state_dir.parent)
+    if (runtime.get("source_sha") != gate["weknora_sha"]
+            or "sha256:" + runtime.get("binary_sha256", "") != gate["runtime_digest"]):
+        raise ValueError("signed Gate does not match effective canary artifact")
+    return True
+
+
 def run(state_dir:Path,profile_path:Path,token_file:Path,transport=None,preflight=False,notify=False):
     gate, reason = validate_gate(state_dir/"gate.json")
     if preflight:
@@ -113,6 +139,8 @@ def run(state_dir:Path,profile_path:Path,token_file:Path,transport=None,prefligh
     if profile_path.is_symlink() or not profile_path.is_file() or (profile_path.stat().st_mode & 0o077):
         return {"result":"BLOCKED","reason":"private test profile missing/insecure"}
     try:
+        if gate:
+            verify_formal_runtime(state_dir, gate)
         profile = json.loads(profile_path.read_text(encoding="utf-8"))
         # Frozen oracle referenced by signed gate, not replaceable by model output.
         digest=hashlib.sha256(profile_path.read_bytes()).hexdigest()
