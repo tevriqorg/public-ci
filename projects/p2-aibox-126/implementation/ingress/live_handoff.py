@@ -11,7 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    """Never forward scoped keys or bearer tokens to a different origin."""
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_NO_REDIRECT_OPENER = build_opener(_RejectRedirects())
 
 
 class HandoffError(RuntimeError):
@@ -52,7 +61,7 @@ class WeKnoraHandoff:
             method='POST',
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with _NO_REDIRECT_OPENER.open(request, timeout=self.timeout) as response:
                 if response.status != 200:
                     raise HandoffError(f'WeKnora {route} HTTP {response.status}')
                 result = json.load(response)
