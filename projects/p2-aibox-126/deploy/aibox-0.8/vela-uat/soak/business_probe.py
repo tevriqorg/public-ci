@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 
 from gate_guard import validate_gate
-from soak_engine import append_event, failing_incident, now_utc, _verified_oracle_sources
+from soak_engine import append_event, failing_incident, now_utc, _verified_oracle_sources, write_l1_artifact
 
 # Only the dedicated #126 canary API. Never query the original owner UAT.
 API_URL = "http://127.0.0.1:18082/api/v1"
@@ -95,8 +95,10 @@ def knowledge_case(profile, token, transport=None):
         if not phrase or not any(phrase in p for p in parts):
             raise ValueError("expected phrase not retrieved from indexed chunks")
         # This is a read-only content regression; true citations are separate KB02/03 cases.
+        matched = next(p for p in parts if phrase in p)
         results.append({"knowledge_id":knowledge_id,"chunk_count":len(parts),
-                        "phrase_evidence_sha256":hashlib.sha256(phrase.encode()).hexdigest()})
+                        "phrase_evidence_sha256":hashlib.sha256(phrase.encode()).hexdigest(),
+                        "chunk_content_sha256":hashlib.sha256(matched.encode()).hexdigest()})
     return results
 
 
@@ -129,6 +131,9 @@ def run(state_dir:Path,profile_path:Path,token_file:Path,transport=None,prefligh
                 "trial_id":gate["trial_id"] if gate else None,
                 "oracle_sha256":gate["oracle_sha256"] if gate else digest,"timestamp_utc":now_utc(),
                 "knowledge_count":len(rows),"evidence_sha256":hashlib.sha256(json.dumps(rows,sort_keys=True).encode()).hexdigest()}
+        if gate:
+            result["evidence_sha256"] = write_l1_artifact(
+                state_dir, result, rows, digest, gate)
         append_event(state_dir/"business.jsonl",result)
         return result
     except (OSError,KeyError,TypeError,ValueError,urllib.error.URLError) as e:

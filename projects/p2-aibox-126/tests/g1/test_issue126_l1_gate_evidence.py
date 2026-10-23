@@ -83,6 +83,15 @@ class L1SoakEvidence(unittest.TestCase):
         self.assertEqual(ok["result"],"PASS")
         self.assertEqual(ok["mode"],"soak")
         self.assertEqual(ok["oracle_sha256"],self.gate["oracle_sha256"])
+        artifact = self.root / "l1-evidence" / (ok["evidence_sha256"]+".json")
+        self.assertTrue(artifact.is_file())
+        out = evaluate(self.root, now=dt.datetime.now(dt.timezone.utc)+dt.timedelta(hours=1),
+                       gate_key=self.key)
+        self.assertEqual(out["l1_slots"],1)
+        artifact.chmod(0o644)
+        out = evaluate(self.root, now=dt.datetime.now(dt.timezone.utc)+dt.timedelta(hours=1),
+                       gate_key=self.key)
+        self.assertEqual(out["l1_slots"],0, "insecure evidence must fail closed")
         profile["knowledge"][0]["expected_phrase"] = "tampered"
         profile_path.write_text(json.dumps(profile))
         with patch.dict(os.environ, {"P2_SOAK_GATE_KEY_FILE":str(self.key)}):

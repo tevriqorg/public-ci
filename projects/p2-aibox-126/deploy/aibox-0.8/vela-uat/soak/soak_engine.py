@@ -219,6 +219,116 @@ def _verified_case_artifact(state_dir, entry):
         return False
 
 
+def _verified_l1_profile_sha(state_dir, gate):
+    """Bind hourly L1 to the signed frozen oracle's exact profile bytes."""
+    path = state_dir / "frozen-oracle.json"
+    if (path.is_symlink() or not path.is_file()
+            or path.stat().st_mode & 0o077):
+        return None
+    raw = path.read_bytes()
+    if len(raw) > 2_000_000 or hashlib.sha256(raw).hexdigest() != gate["oracle_sha256"]:
+        return None
+    try:
+        obj = json.loads(raw)
+        value = obj.get("l1_profile_sha256")
+        if obj.get("schema") != "p2-126-frozen-oracle-v1" or not _is_sha256(value):
+            return None
+        if not _verified_oracle_sources(state_dir, gate):
+            return None
+        return value
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _verified_l1_artifact(state_dir, entry, gate, profile_sha):
+    """Never credit a bare JSONL PASS or an unbound arbitrary evidence hash."""
+    digest = entry.get("evidence_sha256")
+    if not _is_sha256(digest) or not _is_sha256(profile_sha):
+        return False
+    directory = state_dir / "l1-evidence"
+    path = directory / (digest + ".json")
+    if (state_dir.is_symlink() or directory.is_symlink()
+            or not directory.is_dir() or directory.stat().st_mode & 0o077
+            or path.is_symlink() or not path.is_file()
+            or path.stat().st_mode & 0o077 or path.stat().st_nlink != 1):
+        return False
+    raw = path.read_bytes()
+    if len(raw) > 100_000 or hashlib.sha256(raw).hexdigest() != digest:
+        return False
+    try:
+        proof = json.loads(raw)
+        if not isinstance(proof, dict) or proof.get("schema") != "p2-126-l1-evidence-v1":
+            return False
+        for key in ("trial_id", "case_id", "mode", "result", "oracle_sha256",
+                    "timestamp_utc", "knowledge_count"):
+            if proof.get(key) != entry.get(key):
+                return False
+        if (proof.get("p2_sha") != gate["p2_sha"]
+                or proof.get("weknora_sha") != gate["weknora_sha"]
+                or proof.get("runtime_digest") != gate["runtime_digest"]
+                or proof.get("profile_sha256") != profile_sha):
+            return False
+        rows = proof.get("knowledge_evidence")
+        if (not isinstance(rows, list) or not 1 <= len(rows) <= 4
+                or type(entry.get("knowledge_count")) is not int
+                or entry["knowledge_count"] != len(rows)):
+            return False
+        import uuid
+        for row in rows:
+            if not isinstance(row, dict):
+                return False
+            uuid.UUID(row["knowledge_id"])
+            if (type(row.get("chunk_count")) is not int or row["chunk_count"] < 1
+                    or not _is_sha256(row.get("phrase_evidence_sha256"))
+                    or not _is_sha256(row.get("chunk_content_sha256"))):
+                return False
+        return True
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def write_l1_artifact(state_dir, record, rows, profile_sha256, gate):
+    """Write only bounded, non-content proof into private content-addressed storage."""
+    if (record.get("result") != "PASS" or record.get("mode") != "soak"
+            or record.get("trial_id") != gate["trial_id"]
+            or not _is_sha256(profile_sha256)
+            or not isinstance(rows, list) or not 1 <= len(rows) <= 4):
+        raise ValueError("invalid formal L1 proof request")
+    if state_dir.is_symlink() or state_dir.stat().st_mode & 0o077:
+        raise ValueError("insecure formal L1 state directory")
+    directory = state_dir / "l1-evidence"
+    if directory.is_symlink():
+        raise ValueError("L1 evidence directory symlink")
+    directory.mkdir(mode=0o700, exist_ok=True)
+    if directory.stat().st_mode & 0o077:
+        raise ValueError("insecure L1 evidence directory")
+    proof = {"schema": "p2-126-l1-evidence-v1",
+             "profile_sha256": profile_sha256,
+             "p2_sha": gate["p2_sha"], "weknora_sha": gate["weknora_sha"],
+             "runtime_digest": gate["runtime_digest"],
+             "knowledge_evidence": rows}
+    for key in ("trial_id", "case_id", "mode", "result", "oracle_sha256",
+                "timestamp_utc", "knowledge_count"):
+        proof[key] = record[key]
+    raw = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+    if len(raw) > 100_000:
+        raise ValueError("L1 evidence exceeds bounded size")
+    digest = hashlib.sha256(raw).hexdigest()
+    path = directory / (digest + ".json")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        if (path.is_symlink() or path.stat().st_mode & 0o077
+                or path.stat().st_nlink != 1 or path.read_bytes() != raw):
+            raise ValueError("existing L1 evidence artifact differs or is insecure")
+    else:
+        with os.fdopen(fd, "wb") as out:
+            out.write(raw)
+            out.flush()
+            os.fsync(out.fileno())
+    return digest
+
+
 def _valid_case_evidence(entry, case, gate, start, now, state_dir, sources):
     """Every mandatory matrix field must bind to signed versions and real bytes."""
     if not isinstance(entry, dict) or any(not entry.get(k) for k in case["evidence_required"]):
@@ -286,13 +396,15 @@ def evaluate(state_dir: Path, *, now=None, gate_key=None, base=HERE):
                 l0_by_slot.add(slot)
         except (KeyError, TypeError, ValueError):
             continue
+    l1_profile_sha = _verified_l1_profile_sha(state_dir, gate)
     for e in read_events(state_dir / "business.jsonl"):
         try:
             stamp = parse_time(e["timestamp_utc"])
             slot = slot_id(start, stamp)
             if (0 <= slot < completed_slots and e.get("mode")=="soak"
                     and e.get("trial_id")==gate["trial_id"] and e.get("case_id")=="KB01"
-                    and e.get("result")=="PASS" and e.get("oracle_sha256")==gate["oracle_sha256"]):
+                    and e.get("result")=="PASS" and e.get("oracle_sha256")==gate["oracle_sha256"]
+                    and _verified_l1_artifact(state_dir, e, gate, l1_profile_sha)):
                 l1_by_slot.add(slot)
         except (KeyError, ValueError, TypeError):
             continue
