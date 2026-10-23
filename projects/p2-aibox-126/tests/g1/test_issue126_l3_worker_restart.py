@@ -16,6 +16,13 @@ class L3Proof(unittest.TestCase):
                        ["systemctl"], 3, stdout="inactive\n", stderr="")):
             self.assertFalse(active("aibox-uat-soak126-l1-preflight"))
 
+    def test_failed_preflight_unit_is_not_treated_as_idle(self):
+        with patch("issue126_canary_l3_worker_restart.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       ["systemctl"], 3, stdout="failed\n", stderr="")):
+            with self.assertRaises(ValueError):
+                active("aibox-uat-soak126-l1-preflight")
+
     def test_unknown_unit_is_fail_closed(self):
         with patch("issue126_canary_l3_worker_restart.subprocess.run",
                    return_value=subprocess.CompletedProcess(

@@ -39,7 +39,7 @@ def active(unit):
                        capture_output=True, text=True, timeout=10, check=False)
     if r.returncode == 0 and r.stdout.strip() == "active":
         return True
-    if r.returncode == 3 and r.stdout.strip() in {"inactive", "failed"}:
+    if r.returncode == 3 and r.stdout.strip() == "inactive":
         return False
     raise ValueError("unable to verify required systemd unit status")
 
