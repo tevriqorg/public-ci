@@ -1,0 +1,203 @@
+{
+  "schema": "p2-soak-learning-rules-v1",
+  "authority": "tevriqorg/P2-AIBOX#126",
+  "state": "DESIGN_ONLY",
+  "policy": {
+    "promotion": "new tested regression via reviewed PR, no oracle rewrite",
+    "proposal_cap_per_incident": 6,
+    "proposal_cap_per_day": 12,
+    "require_red_before_green": true,
+    "require_negative_case": true,
+    "require_independent_frozen_oracle": true,
+    "auto_modify_original_oracle": false,
+    "auto_weaken_assertions": false,
+    "destructive_in_live_uat_allowed": false,
+    "promotion_requires": [
+      "original_evidence",
+      "reproducer",
+      "root_cause",
+      "reviewed_fix_pr",
+      "ci_pass",
+      "targeted_retest",
+      "broad_regression",
+      "canary_live_smoke"
+    ],
+    "delivery": "issue126_checkpoint_and_sanitized_results"
+  },
+  "rules": [
+    {
+      "signature": "raw_corruption",
+      "prioritized_case_ids": [
+        "TR01",
+        "TR04",
+        "TR06",
+        "RC02"
+      ],
+      "expansion_axes": [
+        "content_hash",
+        "size",
+        "filesystem_sync",
+        "recovery_after_kill"
+      ],
+      "required_mutation": "wrong_sha256",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "identity_drift",
+      "prioritized_case_ids": [
+        "AR02",
+        "AR04",
+        "CO02",
+        "CO03",
+        "TR02"
+      ],
+      "expansion_axes": [
+        "rename",
+        "metadata_only",
+        "changed_bytes",
+        "repeated_event"
+      ],
+      "required_mutation": "duplicate_source_identity",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "race_condition",
+      "prioritized_case_ids": [
+        "TR02",
+        "TR03",
+        "TR05",
+        "CO05"
+      ],
+      "expansion_axes": [
+        "two_writers",
+        "lost_ack",
+        "late_retry",
+        "out_of_order"
+      ],
+      "required_mutation": "stale_commit_ack",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "resource_permission",
+      "prioritized_case_ids": [
+        "AR03",
+        "AR05",
+        "SC01",
+        "SC02"
+      ],
+      "expansion_axes": [
+        "cross_tenant",
+        "symlink",
+        "encoded_path",
+        "hardlink",
+        "revoked_token",
+        "same_tenant_foreign_kb",
+        "cross_kb_external_source_ref"
+      ],
+      "required_mutation": "unauthorized_resource",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "locator_mismatch",
+      "prioritized_case_ids": [
+        "KB02",
+        "KB03",
+        "KB04",
+        "TR04"
+      ],
+      "expansion_axes": [
+        "pdf_page",
+        "timecode_window",
+        "source_revision",
+        "negative_evidence"
+      ],
+      "required_mutation": "wrong_source_locator",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "continuous_cursor",
+      "prioritized_case_ids": [
+        "CO01",
+        "CO02",
+        "CO04",
+        "CO05"
+      ],
+      "expansion_axes": [
+        "empty_update",
+        "reordered_ids",
+        "deleted_event",
+        "checkpoint_restart"
+      ],
+      "required_mutation": "cursor_replay_loss",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "temporal_conflict",
+      "prioritized_case_ids": [
+        "TM01",
+        "TM02",
+        "TM03"
+      ],
+      "expansion_axes": [
+        "valid_at",
+        "known_at",
+        "conflicting_claim",
+        "graph_down"
+      ],
+      "required_mutation": "false_current_claim",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "parser_degradation",
+      "prioritized_case_ids": [
+        "KB02",
+        "KB03",
+        "KB04",
+        "KB05"
+      ],
+      "expansion_axes": [
+        "image",
+        "pdf",
+        "audio",
+        "mp4",
+        "no_vision_endpoint"
+      ],
+      "required_mutation": "silently_empty_semantics",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "restart_recovery",
+      "prioritized_case_ids": [
+        "TR03",
+        "TR06",
+        "RC01",
+        "RC02"
+      ],
+      "expansion_axes": [
+        "api_restart",
+        "worker_restart",
+        "redis_restart",
+        "replay_after_restore"
+      ],
+      "required_mutation": "lost_inflight_work",
+      "only_in_isolated_clone_for_faults": true
+    },
+    {
+      "signature": "monitor_blindness",
+      "prioritized_case_ids": [
+        "OB01",
+        "OB02",
+        "OB03",
+        "LN02"
+      ],
+      "expansion_axes": [
+        "missing_slot",
+        "no_notification",
+        "log_truncation",
+        "stale_heartbeat"
+      ],
+      "required_mutation": "missing_sample_as_pass",
+      "only_in_isolated_clone_for_faults": true
+    }
+  ]
+}
