@@ -37,4 +37,4 @@ jobs:
         run: python implementation/scripts/vela_g0_validate.py design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json --selfcheck
       - name: G0 adaptive test strategy
         working-directory: projects/p16-home-vision
-        run: python -m unittest discover -s implementation/tests -p 'test_vela_g0_strategy.py' -v
+        run: python -m unittest discover -s implementation/tests -p 'test_vela_*.py' -v
