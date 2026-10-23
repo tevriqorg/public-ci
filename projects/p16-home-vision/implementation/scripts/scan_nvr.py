@@ -133,7 +133,6 @@ def scan_once(*, start_day: date, end_day: date, retry_missing_only: bool = Fals
             raise RuntimeError("NVR_TIMEZONE_INVALID") from exc
 
         discovered = 0
-        all_scans_succeeded = True
         with HikvisionIsapiClient(
             base_url=settings.nvr_base_url,
             username=settings.nvr_username,
@@ -172,28 +171,28 @@ def scan_once(*, start_day: date, end_day: date, retry_missing_only: bool = Fals
                     session.commit()
                     discovered += result.discovered_count
                     if result.error_code:
-                        all_scans_succeeded = False
                         LOGGER.warning("NVR scan failed: state=%s error=%s track=%s", result.state, result.error_code, camera.track_id)
                     else:
                         LOGGER.info("NVR scan complete: day=%s track=%s segments=%s", current_day, camera.track_id, result.discovered_count)
-        if all_scans_succeeded:
-            auto = enqueue_closed_day_backlog(
-                session,
-                nvr_id=nvr.id,
-                enabled=settings.archive_auto_enqueue,
-                timezone_verified=settings.nvr_timezone_verified,
+        # Eligibility is independently fenced by successful per-source scans.
+        # A failed peer camera must not suppress preservation for healthy peers.
+        auto = enqueue_closed_day_backlog(
+            session,
+            nvr_id=nvr.id,
+            enabled=settings.archive_auto_enqueue,
+            timezone_verified=settings.nvr_timezone_verified,
+        )
+        if auto.enabled and auto.queue_result is not None:
+            session.commit()
+            LOGGER.info(
+                "closed-day auto-archive reconciliation: eligible=%s queued=%s already_queued=%s archived=%s",
+                auto.eligible_count,
+                len(auto.queue_result.queued),
+                len(auto.queue_result.already_queued),
+                len(auto.queue_result.already_archived),
             )
-            if auto.enabled and auto.queue_result is not None:
-                session.commit()
-                LOGGER.info(
-                    "closed-day auto-archive reconciliation: eligible=%s queued=%s already_queued=%s archived=%s",
-                    auto.eligible_count,
-                    len(auto.queue_result.queued),
-                    len(auto.queue_result.already_queued),
-                    len(auto.queue_result.already_archived),
-                )
-            elif settings.archive_auto_enqueue:
-                LOGGER.error("closed-day auto-archive disabled: reason=%s", auto.reason)
+        elif settings.archive_auto_enqueue:
+            LOGGER.error("closed-day auto-archive disabled: reason=%s", auto.reason)
         return discovered
 
 
