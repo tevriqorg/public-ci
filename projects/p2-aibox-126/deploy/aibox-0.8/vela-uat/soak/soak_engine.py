@@ -290,7 +290,9 @@ def evaluate(state_dir: Path, *, now=None, gate_key=None, base=HERE):
         try:
             stamp = parse_time(e["timestamp_utc"])
             slot = slot_id(start, stamp)
-            if 0 <= slot < completed_slots and e.get("trial_id")==gate["trial_id"] and e.get("case_id")=="KB01" and e.get("result")=="PASS" and e.get("oracle_sha256")==gate["oracle_sha256"]:
+            if (0 <= slot < completed_slots and e.get("mode")=="soak"
+                    and e.get("trial_id")==gate["trial_id"] and e.get("case_id")=="KB01"
+                    and e.get("result")=="PASS" and e.get("oracle_sha256")==gate["oracle_sha256"]):
                 l1_by_slot.add(slot)
         except (KeyError, ValueError, TypeError):
             continue
