@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: tevriqorg/WeKnora
-          ref: 99fc454eb55eb8c1a8894cb9fd1bd963b029195e
+          ref: 2d0da12de26812934f3a49a1a4595cc5aef64d9e
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
