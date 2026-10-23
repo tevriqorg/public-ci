@@ -6,6 +6,48 @@ from urllib.request import Request,build_opener,HTTPRedirectHandler
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self,*a,**kw):return None
 
+def validate_datasource_identity(ds, kb, url, get_remote):
+    """Check *server-owned* identity before any RSS sync side effects.
+
+    The local marker is only a hint; it never grants authority to operate on a
+    different KB/feed using the canary session JWT.
+    """
+    if not isinstance(ds, dict):
+        raise ValueError("RSS marker is not an object")
+    ident = ds.get("id")
+    if not isinstance(ident, str):
+        raise ValueError("RSS marker has no datasource UUID")
+    uuid.UUID(ident)
+    remote = get_remote("/datasource/" + ident)
+    if not isinstance(remote, dict) or remote.get("id") != ident:
+        raise ValueError("remote datasource ID mismatch")
+    if remote.get("knowledge_base_id") != kb:
+        raise ValueError("remote datasource KB mismatch")
+    if (remote.get("type") != "rss"
+            or remote.get("name") != "P2-126 Tailscale public Atom canary"
+            or remote.get("sync_mode") != "incremental"
+            or remote.get("sync_deletions") is not False
+            or remote.get("status") != "paused"):
+        raise ValueError("remote datasource mode/type not dedicated to canary")
+    cfg = remote.get("config")
+    if (not isinstance(cfg, dict) or cfg.get("type") != "rss"
+            or not isinstance(cfg.get("settings"), dict)
+            or cfg["settings"].get("feed_urls") != url):
+        raise ValueError("remote datasource feed URL mismatch")
+    return remote
+
+
+def load_bound_datasource(root, marker, kb, url, get_remote):
+    """Fail closed for symlink/world-readable/stale marker and remote identity."""
+    data = json.loads(secure_canary_read(root, marker))
+    if (not isinstance(data, dict)
+            or set(data) != {"id", "source_url", "knowledge_base_id"}
+            or data["knowledge_base_id"] != kb
+            or data["source_url"] != url):
+        raise ValueError("RSS marker is not bound to frozen KB/source")
+    return validate_datasource_identity(data, kb, url, get_remote)
+
+
 def run(root):
     state=verify_live_canary(root);assert state['clone_db'].startswith('aibox126_canary') and state['clone_db']!=state['original_db']
     kb=json.loads((root/'test-kb.json').read_text())['kb_id'];uuid.UUID(kb)
@@ -16,13 +58,24 @@ def run(root):
         with opener.open(q,timeout=25) as r:
             raw=r.read(2_000_001);assert len(raw)<=2_000_000;return json.loads(raw)
     marker=root/'continuous-datasource.json'
-    if marker.exists():ds=json.loads(marker.read_text())
+    if marker.exists():
+        ds=load_bound_datasource(root,marker,kb,url,call)
     else:
-        candidates=call('/datasource?kb_id='+kb);assert isinstance(candidates,list)
-        matches=[x for x in candidates if x.get('name')=='P2-126 Tailscale public Atom canary'];assert len(matches)<=1
-        if matches:ds=matches[0]
-        else:ds=call('/datasource',{'knowledge_base_id':kb,'name':'P2-126 Tailscale public Atom canary','type':'rss','status':'paused','sync_schedule':'','sync_mode':'incremental','sync_deletions':False,'config':{'type':'rss','credentials':{},'resource_ids':[url],'settings':{'feed_urls':url}}})
-        assert ds.get('id');marker.write_text(json.dumps({'id':ds['id'],'source_url':url,'knowledge_base_id':kb},indent=2));marker.chmod(0o600)
+        candidates=call('/datasource?kb_id='+kb)
+        assert isinstance(candidates,list)
+        matches=[x for x in candidates if x.get('name')=='P2-126 Tailscale public Atom canary']
+        assert len(matches)<=1
+        if matches:
+            ds=validate_datasource_identity(matches[0],kb,url,call)
+        else:
+            ds=call('/datasource',{'knowledge_base_id':kb,'name':'P2-126 Tailscale public Atom canary','type':'rss','status':'paused','sync_schedule':'','sync_mode':'incremental','sync_deletions':False,'config':{'type':'rss','credentials':{},'resource_ids':[url],'settings':{'feed_urls':url}}})
+            ds=validate_datasource_identity(ds,kb,url,call)
+        # Atomic exclusive create: a competing writer cannot replace the identity.
+        fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600)
+        with os.fdopen(fd,'w') as f:
+            json.dump({'id':ds['id'],'source_url':url,'knowledge_base_id':kb},f)
+            f.flush()
+            os.fsync(f.fileno())
     ident=ds['id'];uuid.UUID(ident)
     env={}
     for line in (root/'canary.env').read_text().splitlines():
