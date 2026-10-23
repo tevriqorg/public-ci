@@ -76,6 +76,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Reject redirected scoped handoff credentials (synthetic loopback)
+        working-directory: projects/p2-aibox-126
+        run: python3 -m unittest discover -s tests/g1 -p 'test_issue126_handoff_redirect.py' -v
       - name: Verify canary clients reject missing private state
         run: |
           python3 - <<'PYCONTRACT'
