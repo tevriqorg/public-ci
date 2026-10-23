@@ -1,6 +1,7 @@
 """#126: bounded real-RFC canary. Does not authorize or start formal soak."""
 import argparse,datetime,hashlib,json,os,shlex,subprocess,sys,time,uuid
 from pathlib import Path
+from p2_canary_guard import verify_live_canary, secure_canary_read
 from urllib.request import Request,build_opener,HTTPRedirectHandler
 from urllib.error import HTTPError
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -10,7 +11,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 def run(root):
     oracle=json.loads((root/'at-rest-oracle-v1.json').read_text())
-    state=json.loads((root/'canary-state.json').read_text())
+    state=verify_live_canary(root)
     assert state['clone_db'].startswith('aibox126_canary') and state['clone_db']!=state['original_db']
     for unit,expected in (('aibox126-canary-api','api'),('aibox126-canary-worker','worker')):
         pid=subprocess.check_output(['systemctl','--user','show',unit,'-p','MainPID','--value'],text=True).strip();assert pid.isdecimal() and int(pid)>0,'canary service not running'
@@ -18,7 +19,7 @@ def run(root):
         assert effective.get('WEKNORA_RUNTIME_ROLE')==expected,'effective runtime role is wrong'
         if expected=='worker':assert 'core' in effective.get('WEKNORA_WORKER_POOLS','').split(','),'no core consumer'
     kb=oracle['kb_id'];uuid.UUID(kb)
-    read=(root/'read-key.token').read_text().strip();ingest=(root/'ingest-key.token').read_text().strip()
+    read=secure_canary_read(root,root/'read-key.token').strip();ingest=secure_canary_read(root,root/'ingest-key.token').strip()
     api='http://127.0.0.1:18082/api/v1';opener=build_opener(NoRedirect())
     def call(route,body=None,key=read,jwt=False,method=None):
         headers={'Content-Type':'application/json',('Authorization' if jwt else 'X-API-Key'):('Bearer '+key if jwt else key)}
@@ -29,7 +30,7 @@ def run(root):
     info=call('/knowledge-bases/'+kb);assert info['success']
     if not info['data'].get('embedding_model_id'):
         template=Path('/home/ubuntu/work/P2-AIBOX-acceptance/acceptance/vela-realistic/runtime/kb-model-config.json')
-        session=json.loads((root/'session.json').read_text())['token']
+        session=json.loads(secure_canary_read(root,root/'session.json'))['token']
         configured=call('/initialization/config/'+kb,json.loads(template.read_text()),key=session,jwt=True,method='PUT');assert configured['success']
     raw=Path('/home/ubuntu/runtime/aibox-0.8-uat/real-corpus/rfc9110.txt');alias=root/'storage/10000/aibox126/rfc9110.txt'
     source=raw.read_bytes();assert hashlib.sha256(source).hexdigest()==oracle['source_sha256']

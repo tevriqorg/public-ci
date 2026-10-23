@@ -1,13 +1,14 @@
 """#126 real public-file Transit with a canary-only API outage and recovery."""
 import argparse,datetime,hashlib,json,os,shlex,subprocess,sys,time,uuid
 from pathlib import Path
+from p2_canary_guard import verify_live_canary, secure_canary_read
 from urllib.request import Request,urlopen
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from implementation.ingress.store import IngressStore
 from implementation.ingress.live_handoff import WeKnoraHandoff,HandoffError
 
 def run(root,inject):
-    state=json.loads((root/'canary-state.json').read_text());assert state['clone_db'].startswith('aibox126_canary') and state['clone_db']!=state['original_db']
+    state=verify_live_canary(root);assert state['clone_db'].startswith('aibox126_canary') and state['clone_db']!=state['original_db']
     oracle=json.loads((root/'at-rest-oracle-v1.json').read_text());kb=oracle['kb_id'];uuid.UUID(kb)
     source=Path('/home/ubuntu/runtime/aibox-0.8-uat/real-corpus/rfc9110.txt');original=source.read_bytes();digest=hashlib.sha256(original).hexdigest();assert digest==oracle['source_sha256']
     store=IngressStore(root/'storage/10000/aibox126/transit')
@@ -25,7 +26,7 @@ def run(root,inject):
     if session['state'] in ('analyzed','committing'):session=store.commit(ident,'rfc9110.txt')
     final=store.final_path(ident);assert hashlib.sha256(final.read_bytes()).hexdigest()==digest
     if session['state']=='committed':store.mark_handoff_pending(ident)
-    key=(root/'ingest-key.token').read_text().strip();client=WeKnoraHandoff(api_url='http://127.0.0.1:18082/api/v1',api_key=key,kb_id=kb,timeout=4)
+    key=secure_canary_read(root,root/'ingest-key.token').strip();client=WeKnoraHandoff(api_url='http://127.0.0.1:18082/api/v1',api_key=key,kb_id=kb,timeout=4)
     desc={'resource_path':'local://10000/aibox126/transit/final/rfc9110.txt','size':len(original),'sha256':digest,'filename':'rfc9110.txt','mime':'text/plain'}
     outage=False
     if inject:

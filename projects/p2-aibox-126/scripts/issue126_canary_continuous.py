@@ -1,15 +1,16 @@
 """#126 native RSS backfill/replay of a real public feed, no synthetic updates."""
 import argparse,datetime,hashlib,json,os,shlex,subprocess,time,uuid,xml.etree.ElementTree as ET
 from pathlib import Path
+from p2_canary_guard import verify_live_canary, secure_canary_read
 from urllib.request import Request,build_opener,HTTPRedirectHandler
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self,*a,**kw):return None
 
 def run(root):
-    state=json.loads((root/'canary-state.json').read_text());assert state['clone_db'].startswith('aibox126_canary') and state['clone_db']!=state['original_db']
+    state=verify_live_canary(root);assert state['clone_db'].startswith('aibox126_canary') and state['clone_db']!=state['original_db']
     kb=json.loads((root/'test-kb.json').read_text())['kb_id'];uuid.UUID(kb)
     feed=json.loads((root/'public-feed/manifest.json').read_text());url=feed['source_url'];assert url=='https://github.com/tailscale/tailscale/releases.atom'
-    token=json.loads((root/'session.json').read_text())['token'];opener=build_opener(NoRedirect())
+    token=json.loads(secure_canary_read(root,root/'session.json'))['token'];opener=build_opener(NoRedirect())
     def call(route,body=None):
         q=Request('http://127.0.0.1:18082/api/v1'+route,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='GET' if body is None else 'POST')
         with opener.open(q,timeout=25) as r:
@@ -54,7 +55,7 @@ def run(root):
     atom=ET.fromstring((root/'public-feed'/(feed['sha256']+'.atom')).read_bytes());ns={'a':'http://www.w3.org/2005/Atom'}
     title=atom.find('a:entry/a:title',ns).text;assert title
     target=next(x['id'] for x in after if x['external_id']==url+':'+feed['provider_ids'][0])
-    read=(root/'read-key.token').read_text().strip()
+    read=secure_canary_read(root,root/'read-key.token').strip()
     query=Request('http://127.0.0.1:18082/api/v1/knowledge-bases/'+kb+'/hybrid-search',data=json.dumps({'query_text':title,'match_count':20}).encode(),headers={'X-API-Key':read,'Content-Type':'application/json'},method='POST')
     with opener.open(query,timeout=25) as z:search=json.loads(z.read(2_000_000))
     def objects(x):
