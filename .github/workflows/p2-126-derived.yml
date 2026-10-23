@@ -89,8 +89,10 @@ jobs:
               subprocess.run([sys.executable,str(script),'--help'],check=True,stdout=subprocess.DEVNULL)
               with tempfile.TemporaryDirectory() as empty:
                   r=subprocess.run([sys.executable,str(script),'--state-dir',empty],capture_output=True,text=True,timeout=10)
-                  assert r.returncode==1,(script,r.stdout,r.stderr)
                   d=json.loads(r.stdout)
-                  assert d['result'].startswith('FAIL_CANARY') or (script.name=='issue126_canary_daily.py' and d['result']=='PRECHECK_BLOCKED_L2_SUBSET'),d
+                  if script.name=='issue126_canary_daily.py':
+                      assert r.returncode==2 and d['result']=='PRECHECK_BLOCKED_L2_SUBSET',(script,r.returncode,d)
+                  else:
+                      assert r.returncode==1 and d['result'].startswith('FAIL_CANARY'),(script,r.returncode,d)
                   print(script.name+': missing private state rejected; no PASS fabricated')
           PYCONTRACT
