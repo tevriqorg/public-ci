@@ -40,7 +40,12 @@ def coalesce_segments(segments: Iterable[DiscoveredSegment]) -> list[DiscoveredS
 
 def _response_hash(segments: list[DiscoveredSegment]) -> str:
     digest = hashlib.sha256()
-    for segment in segments:
+    # Search response order is not recording stability. Canonicalize identities
+    # so an unchanged NVR result set can satisfy the two-scan archive gate.
+    for segment in sorted(segments, key=lambda item: (
+        item.track_id, item.source_start.isoformat(), item.source_end.isoformat(),
+        item.locator_fingerprint,
+    )):
         digest.update(
             f"{segment.track_id}|{segment.source_start.isoformat()}|{segment.source_end.isoformat()}|{segment.locator_fingerprint}\n".encode()
         )
