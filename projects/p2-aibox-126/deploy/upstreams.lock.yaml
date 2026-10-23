@@ -1,0 +1,62 @@
+# AIBOX upstream compatibility lock
+# Updated only after compatibility review + acceptance tests.
+format: 1
+frozen_at: "2026-10-13"
+requirement: "requirements/AIBOX_KNOWLEDGE_KERNEL.md"
+issue: "https://github.com/tevriqorg/P2-AIBOX/issues/84"
+
+upstreams:
+  weknora:
+    repository: "https://github.com/Tencent/WeKnora"
+    commit: "92382208674ae1b9a2dd62ac0fa98d67ce348bfe"
+    nearest_stable_release: "v0.8.2"
+    nearest_stable_release_commit: "3e8b0bfc80b845b2d4b2ed683994748741450a97"
+    commits_ahead_of_release: 281
+    license: "MIT (third-party components retain their own licenses)"
+    consumption: "source-pin"
+
+  graphiti:
+    repository: "https://github.com/getzep/graphiti"
+    commit: "2f0fb35b749f1ff17377892e099882176e453393"
+    package: "graphiti-core"
+    package_version: "0.31.0"
+    nearest_stable_release: "v0.30.2"
+    nearest_stable_release_commit: "eaa4128681bc53487138a4bbc22d58336ebe70d2"
+    commits_ahead_of_release: 41
+    license: "Apache-2.0"
+    consumption: "source-pin"
+
+runtime_dependencies:
+  postgres:
+    image: "paradedb/paradedb:v0.25.11-pg17"
+    source: "Tencent/WeKnora docker-compose.yml at pinned commit"
+    production_digest_required: true
+    production_digest_status: "pending"
+  redis:
+    image: "redis:7.0-alpine"
+    persistence: "AOF + named volume"
+    source: "Tencent/WeKnora docker-compose.yml at pinned commit"
+    production_digest_required: true
+    production_digest_status: "pending"
+  neo4j:
+    image: "neo4j:5.26.2"
+    purpose: "Graphiti temporal store"
+    source: "getzep/graphiti docker-compose.yml at pinned commit"
+    production_digest_required: true
+    production_digest_status: "pending"
+
+build_policy:
+  weknora_images: "build frontend/app/docreader from pinned WeKnora commit; never ${WEKNORA_VERSION:-latest}"
+  graphiti_adapter: "build AIBOX private synchronous adapter from pinned graphiti-core commit"
+  graphiti_official_async_server: false
+  graphiti_mcp: false
+
+policy:
+  floating_tags_allowed: false
+  latest_allowed: false
+  upgrade_requires:
+    - "old/new exact commit review"
+    - "upstream contract test suite"
+    - "data migration/deletion semantics review"
+    - "AIBOX acceptance matrix"
+    - "Requirement/System Spec/lock update"
