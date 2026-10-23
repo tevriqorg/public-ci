@@ -217,6 +217,22 @@ class G0StrategyTests(unittest.TestCase):
         self.assertIn("never overwrite original FAIL evidence", p["evidence_requirement"])
         self.assertIn("append linked recovery runs", p["evidence_requirement"])
 
+    def test_replay_command_requires_approved_nonempty_contract(self):
+        import copy
+        for command in (None, "", 123, [], "echo ok", "p16-soak scenario; echo extra"):
+            changed = copy.deepcopy(CATALOG)
+            if command is None:
+                del changed["scenarios"][0]["replay"]["command"]
+            else:
+                changed["scenarios"][0]["replay"]["command"] = command
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, "UNAPPROVED_CATALOG_INVALID"):
+                plan(changed, first_day=T0, day=T0, incidents=[])
+        for replay in (None, [], "not-an-object"):
+            changed = copy.deepcopy(CATALOG)
+            changed["scenarios"][0]["replay"] = replay
+            with self.subTest(replay=replay), self.assertRaisesRegex(ValueError, "UNAPPROVED_CATALOG_INVALID"):
+                plan(changed, first_day=T0, day=T0, incidents=[])
+
     def test_idempotent_plan_no_file_writes(self):
         p1 = plan(CATALOG,first_day=T0,day=T0,incidents=[incident()])
         p2 = plan(CATALOG,first_day=T0,day=T0,incidents=[incident()])

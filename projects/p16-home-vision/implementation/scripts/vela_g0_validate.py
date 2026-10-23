@@ -66,10 +66,16 @@ def inspect(catalog):
         require(s.get("severity") in ("P0", "P1", "P2"), f"BAD_SEVERITY_{sid}")
         require(s.get("requirement") in declared, f"UNKNOWN_REQ_{sid}")
         require(s.get("on_failure") == "PRESERVE_REPRO_FIX_REVIEW_TARGETED_FULL_REGRESSION", f"NO_FIX_LOOP_{sid}")
-        replay = s.get("replay") or {}
+        replay = s.get("replay")
+        if not isinstance(replay, dict):
+            failures.append(f"REPLAY_NOT_OBJECT_{sid}")
+            replay = {}
         require(replay.get("mode") == "isolated-synthetic" and replay.get("scenario_id") == sid,
                 f"REPLAY_UNSAFE_{sid}")
-        require(not any(x in replay.get("command", "").lower() for x in DANGEROUS_COMMANDS),
+        command = replay.get("command")
+        require(isinstance(command, str) and command == "p16-soak scenario",
+                f"COMMAND_NOT_APPROVED_{sid}")
+        require(isinstance(command, str) and not any(x in command.lower() for x in DANGEROUS_COMMANDS),
                 f"COMMAND_UNSAFE_{sid}")
     require({f"S{i:03}" for i in range(1, 37)} <= scenario_ids, "FROZEN_SCENARIOS_MISSING")
     daily = {"S001", "S002", "S003", "S004", "S005", "S012", "S016", "S026",
@@ -103,6 +109,8 @@ def inspect(catalog):
 def selfcheck(catalog):
     """Mutation smoke: validator must reject material design mistakes."""
     changes = [
+        ("MISSING_REPLAY_COMMAND", lambda c: c["scenarios"][0]["replay"].pop("command")),
+        ("EMPTY_REPLAY_COMMAND", lambda c: c["scenarios"][0]["replay"].update(command="")),
         ("MISSING_CRITICAL_SCENE", lambda c: c.update(scenarios=[s for s in c["scenarios"] if s["id"] != "S007"])),
         ("EXPANDED_DAILY", lambda c: c["scenarios"][5].update(cadence="daily")),
         ("WEAKENED_DAILY", lambda c: c["scenarios"][0].update(cadence="rotation")),
