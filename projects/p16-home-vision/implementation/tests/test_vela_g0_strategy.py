@@ -17,6 +17,10 @@ def incident(**kw):
          "classification": "product_bug", "first_seen": "2026-10-24",
          "evidence_hash": "sha256:" + "a" * 64, "scenario_ids": ["S019"],
          "recurrence": 2, "blast_radius": 2}
+    if kw.get("status") in ("fixed", "observing"):
+        for field in ("full_regression_evidence", "public_ci_evidence", "review_evidence",
+                      "permanent_regression_evidence", "adjacent_pass_evidence"):
+            d[field] = "sha256:" + "b" * 64
     d.update(kw)
     return d
 
@@ -151,6 +155,24 @@ class G0StrategyTests(unittest.TestCase):
         self.assertNotIn("SENSITIVE_UNREVIEWED_TEST_SOURCE",json.dumps(p))
         p3=plan(CATALOG,first_day=T0,day=T0+timedelta(days=3),incidents=[bug])
         self.assertNotIn("S019",p3["adaptive"])
+
+    def test_fixed_bug_cannot_age_out_with_incomplete_loop(self):
+        for field in ("full_regression_evidence", "public_ci_evidence", "review_evidence",
+                      "permanent_regression_evidence", "adjacent_pass_evidence"):
+            bug = incident(status="fixed", fixed_date="2026-10-24", fix_sha="deadbeef",
+                           targeted_pass_evidence="sha256:" + "f" * 64)
+            del bug[field]
+            with self.subTest(field=field):
+                p = plan(CATALOG, first_day=T0, day=T0+timedelta(days=4), incidents=[bug])
+                self.assertEqual(p["gate_to_run"], "HOLD_AFFECTED_WORK")
+                self.assertIn("FIX_LOOP_INCOMPLETE", [x["reason"] for x in p["blockers"]])
+
+    def test_duplicate_pending_does_not_hide_unexecuted_risk(self):
+        bugs = [incident(id=f"BUG-{i}", scenario_ids=[sid]) for i,sid in enumerate(
+            ["S019", "S020", "S021", "S022", "S022", "S023"])]
+        p = plan(CATALOG, first_day=T0, day=T0, incidents=bugs)
+        self.assertEqual([x["scenario_id"] for x in p["adaptive_pending"]], ["S022", "S023"])
+        self.assertEqual(p["gate_to_run"], "HOLD_AFFECTED_WORK")
 
     def test_idempotent_plan_no_file_writes(self):
         p1 = plan(CATALOG,first_day=T0,day=T0,incidents=[incident()])

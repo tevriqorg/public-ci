@@ -88,6 +88,7 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) ->
     new_case_proposals = []
     blockers = []
     considered = []
+    pending = []
     for bug in sorted(incidents, key=_incident_priority):
         if bug.get("classification", "unknown") == "unknown":
             blockers.append({"bug": bug["id"], "reason": "UNCLASSIFIED_FAILURE"})
@@ -100,6 +101,11 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) ->
             if not isinstance(bug.get("fix_sha"), str) or not COMMIT.fullmatch(bug["fix_sha"]) or not isinstance(bug.get("targeted_pass_evidence"), str) or not HASH.fullmatch(bug["targeted_pass_evidence"]):
                 blockers.append({"bug": bug["id"], "reason": "FIX_NOT_VERIFIED"})
                 continue
+            required = ("full_regression_evidence", "public_ci_evidence", "review_evidence",
+                        "permanent_regression_evidence", "adjacent_pass_evidence")
+            if any(not isinstance(bug.get(k), str) or not HASH.fullmatch(bug[k]) for k in required):
+                blockers.append({"bug": bug["id"], "reason": "FIX_LOOP_INCOMPLETE"})
+                continue
             fixed_day = date.fromisoformat(bug["fixed_date"])
             if not fixed_day <= day < fixed_day + timedelta(days=3):
                 continue
@@ -107,10 +113,14 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) ->
             if sid not in scenarios:
                 blockers.append({"bug": bug["id"], "reason": "UNKNOWN_SCENARIO_ORACLE"})
                 continue
-            if sid not in mandatory and sid not in rotation and sid not in additions:
+            if sid not in mandatory and sid not in rotation and sid not in {x["scenario_id"] for x in considered}:
                 considered.append({"bug": bug["id"], "scenario_id": sid})
                 if len(additions) < 3:
                     additions.append(sid)
+                else:
+                    pending.append({"bug": bug["id"], "scenario_id": sid})
+    if pending:
+        blockers.append({"bug": "ADAPTIVE_BUDGET", "reason": "REQUIRED_TARGETED_TESTS_PENDING"})
     selected = mandatory + [s for s in rotation if s not in mandatory] + additions
     if len(selected) != len(set(selected)):
         raise AssertionError("DUPLICATE_TEST_SELECTION")
@@ -118,7 +128,7 @@ def plan(catalog: dict, *, first_day: date, day: date, incidents: list[dict]) ->
             "incident_set_sha256": _sha(incidents), "day_sgt": day.isoformat(),
             "window_start_sgt": first_day.isoformat(), "date_offset": day_idx,
             "mandatory": mandatory, "rotation": rotation, "adaptive": additions,
-            "adaptive_pending": considered[len(additions):],
+            "adaptive_pending": pending,
             "scenario_ids": selected, "blockers": blockers,
             "new_case_proposals": new_case_proposals,
             "evidence_requirement": "record all failures and original SHA; never overwrite PASS",
