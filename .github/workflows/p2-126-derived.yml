@@ -1,7 +1,7 @@
 name: P2 126 derived identity regression
 on:
   pull_request:
-    paths: ['.github/workflows/p2-126-derived.yml']
+    paths: ['.github/workflows/p2-126-derived.yml', 'projects/p2-aibox-126/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -67,3 +67,27 @@ jobs:
           name: p2-126-weknora-server
           path: dist/
           retention-days: 14
+
+  canary-harness-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify canary clients reject missing private state
+        run: |
+          python3 - <<'PYCONTRACT'
+          import json,pathlib,subprocess,sys,tempfile
+          root=pathlib.Path('projects/p2-aibox-126')
+          for script in sorted((root/'scripts').glob('issue126_canary_*.py')):
+              subprocess.run([sys.executable,'-m','py_compile',str(script)],check=True)
+              subprocess.run([sys.executable,str(script),'--help'],check=True,stdout=subprocess.DEVNULL)
+              with tempfile.TemporaryDirectory() as empty:
+                  r=subprocess.run([sys.executable,str(script),'--state-dir',empty],capture_output=True,text=True,timeout=10)
+                  assert r.returncode==1,(script,r.stdout,r.stderr)
+                  d=json.loads(r.stdout)
+                  assert d['result'].startswith('FAIL_CANARY'),d
+                  print(script.name+': missing private state rejected; no PASS fabricated')
+          PYCONTRACT
