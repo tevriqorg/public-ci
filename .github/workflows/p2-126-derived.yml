@@ -107,3 +107,16 @@ jobs:
                       assert r.returncode==1 and d['result'].startswith('FAIL_CANARY'),(script,r.returncode,d)
                   print(script.name+': missing private state rejected; no PASS fabricated')
           PYCONTRACT
+      - name: Freeze exact code-only precheck harness artifact
+        run: |
+          mkdir -p precheck-artifact
+          git archive HEAD projects/p2-aibox-126 | tar -x --strip-components=2 -C precheck-artifact
+          git rev-parse HEAD > precheck-artifact/PUBLIC_CI_REVISION
+          cd precheck-artifact
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: p2-126-precheck-harness
+          path: precheck-artifact/
+          retention-days: 30
