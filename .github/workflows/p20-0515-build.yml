@@ -65,5 +65,5 @@ jobs:
           file: projects/p20-transfer-hub/transfer_hub/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/tevriqorg/public-ci:p20-transfer-hub-0.5.15
+          tags: ghcr.io/tevriqorg/public-ci:p20-transfer-hub-0.5.15-rc2
           provenance: false

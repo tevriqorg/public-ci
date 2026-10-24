@@ -1,1 +1,1 @@
-tevriqorg/P20-QQ-Runtime d46cbc3aa7e62421ab316e45c5f3a0de26cbc951 0.5.15
+tevriqorg/P20-QQ-Runtime c839786a1612ca31114e7d0dc1959ecc81ee993a 0.5.15

@@ -126,3 +126,25 @@ def test_spool_does_not_run_when_job_is_active(tmp_path):
     assert store.active_stage_count() > 0
     assert sweep_orphan_spool(spool, store, now_ts=now) == 0
     assert old.exists()
+
+
+def test_watchd_real_startup_and_retention_tick(tmp_path, monkeypatch, capsys):
+    """Exercise main(), not just Store/retention helpers: catches missing imports."""
+    import transfer_hub.watchd as watchd
+    monkeypatch.setenv("P20_TRANSFER_DATA", str(tmp_path))
+    monkeypatch.setenv("P20_WATCHER_HUB_URL", "http://127.0.0.1:9")
+    monkeypatch.delenv("P20_QQ_SPOOL_ROOT", raising=False)
+    monkeypatch.setattr(watchd.WatchRunner, "run", lambda *_args: {"outcome": "SKIPPED"})
+    monkeypatch.setattr(watchd.ReadyNotifier, "scan", lambda *_args: [])
+    def stop_after_first_tick(_seconds):
+        raise StopIteration("one watchd iteration complete")
+    monkeypatch.setattr(watchd, "sleep_until_next_tick", stop_after_first_tick)
+    import pytest
+    with pytest.raises(StopIteration, match="one watchd iteration complete"):
+        watchd.main()
+    out = capsys.readouterr().out
+    assert '"event": "watchd.started"' in out
+    from transfer_hub.db import Store
+    store = Store(tmp_path / "transfer.db")
+    assert len(store.list_watch_tasks()) == 2
+    assert {t["config"]["ttl_seconds"] for t in store.list_watch_tasks()} == {172800}
