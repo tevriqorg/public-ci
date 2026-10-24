@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY server.py /app/server.py
+
+CMD ["python3", "/app/server.py"]
+
+LABEL org.opencontainers.image.title="P20 QQ Flash adapter API"
+LABEL org.opencontainers.image.source="tevriqorg/P20-QQ-Runtime"

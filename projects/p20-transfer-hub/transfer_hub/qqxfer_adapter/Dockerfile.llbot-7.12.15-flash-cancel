@@ -1,0 +1,26 @@
+FROM node:24-bookworm-slim AS build
+
+ARG LLBOT_COMMIT=e0d5d2067651b0e526c841addaa3b7de51d2dd8c
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable
+WORKDIR /src
+RUN git clone https://github.com/LLOneBot/LuckyLilliaBot.git . \
+ && git checkout "$LLBOT_COMMIT"
+
+COPY llbot-7.12.15-flash-cancel.patch /tmp/llbot.patch
+RUN git apply --check /tmp/llbot.patch \
+ && git apply /tmp/llbot.patch
+
+RUN corepack yarn install --immutable
+RUN corepack yarn build
+
+FROM linyuchen/llonebot:7.12.15
+COPY --from=build /src/dist/llbot.js /app/llbot/llbot.js
+
+LABEL org.opencontainers.image.title="P20 LLBot 7.12.15 Flash cancel patch"
+LABEL org.opencontainers.image.description="LLBot 7.12.15 pinned source build with P20 Flash cancel action and OneBot token log redaction"
+LABEL org.opencontainers.image.source="tevriqorg/P20-QQ-Runtime"

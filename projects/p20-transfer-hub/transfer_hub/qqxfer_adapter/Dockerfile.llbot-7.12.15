@@ -1,0 +1,7 @@
+FROM linyuchen/llonebot:7.12.15
+
+RUN node -e 'const fs=require("fs"); const p="/app/llbot/llbot.js"; let s=fs.readFileSync(p,"utf8"); const rules=[["this.ctx.logger.info(\"receive http header token\", clientToken);","this.ctx.logger.info(\"receive http header token\", \"<redacted>\");"],["this.ctx.logger.info(\"receive http url token\", clientToken);","this.ctx.logger.info(\"receive http url token\", \"<redacted>\");"]]; for(const [a,b] of rules){if(!s.includes(a)) throw new Error("expected LLBot 7.12.15 token-log line not found"); s=s.replace(a,b);} fs.writeFileSync(p,s);'
+
+LABEL org.opencontainers.image.title="P20 LLBot 7.12.15 token-log hotfix"
+LABEL org.opencontainers.image.description="Upstream LLBot 7.12.15 with only OneBot token log redaction"
+LABEL org.opencontainers.image.source="tevriqorg/P20-QQ-Runtime"
