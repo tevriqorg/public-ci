@@ -1,0 +1,672 @@
+{
+  "schema": "p2-soak-cases-v2",
+  "authority": "tevriqorg/P2-AIBOX#126",
+  "status": "DESIGN_ONLY_NOT_LIVE_ACCEPTANCE",
+  "cases": [
+    {
+      "id": "AR01",
+      "mode": "at_rest",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "external read-only + SHA/mtime/bytes unchanged; Resource ownership=external; Knowledge+Revision+locator persisted",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "AR02",
+      "mode": "at_rest",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "10 replays: raw count and stable Knowledge ID/SourceRevision identical; no duplicate storage",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "AR03",
+      "mode": "at_rest",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P0",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "unbind/delete resource: physical external file remains bit-identical",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "AR04",
+      "mode": "at_rest",
+      "layer": "clone",
+      "when": "D4-D7",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "content revision creates SourceRevision but retains stable Knowledge ID; rename metadata-only does not create revision",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "AR05",
+      "mode": "at_rest",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P0",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "path traversal, symlink escape and cross-tenant source registration denied",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TR01",
+      "mode": "transit",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "real NASA video stage->stream verify->analysis->atomic final->Resource/Knowledge/Revision/receipt->cleanup; single Raw",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TR02",
+      "mode": "transit",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "duplicate/late ack/retry cannot create new raw/knowledge or clean staging without authentic receipt",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TR03",
+      "mode": "transit",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "kill after final rename before acknowledgement; restart deduces same final, hash matches, no duplicate",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TR04",
+      "mode": "transit",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P0",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "wrong receipt, wrong target, wrong SHA or unexpected symlink blocked; final and source preserved",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TR05",
+      "mode": "transit",
+      "layer": "clone",
+      "when": "D12-D15",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "two concurrent imports and 20-second clip plus original MP4 within bounded RAM/IO limits",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TR06",
+      "mode": "transit",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "disk-full/worker crash/backoff/resume preserves unprocessed Raw and marks pending, never fake-complete",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "CO01",
+      "mode": "continuous",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "actual public feed backfill IDs/cursor checkpoints; first and incremental batches only new entries",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "CO02",
+      "mode": "continuous",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "replay/unchanged event reuses KB Knowledge ID, no duplicate full feed raw",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "CO03",
+      "mode": "continuous",
+      "layer": "live",
+      "when": "D4-D7",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "actual upstream changed release version retains stable source identity; source revision attributable to provider id/etag",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "CO04",
+      "mode": "continuous",
+      "layer": "clone",
+      "when": "D4-D7",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "explicit fixture mutation/withdraw triggers version/deletion semantics; source removed != temporal fact false",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "CO05",
+      "mode": "continuous",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "cursor state survives kill and network split; no skips or duplicate processing on catchup",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "KB01",
+      "mode": "kernel",
+      "layer": "live",
+      "when": "hourly",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "live read/query in distinct test KB returns known phrase and specific source locator; queued task completes",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "KB02",
+      "mode": "kernel",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "RFC PDF page/section title retrieval and citation match frozen oracle, no unsupported claim",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "KB03",
+      "mode": "kernel",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "NASA MP4 keyframe/timecode events agree with independent human oracle; negatives disallow unseen intents",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "KB04",
+      "mode": "kernel",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "real public audio segment timestamp and transcript expected tokens independently verified",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "KB05",
+      "mode": "kernel",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "same pinned inputs across restart and retest produce same SourceRevision and locator; derived config recorded",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TM01",
+      "mode": "temporal",
+      "layer": "live",
+      "when": "daily",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "current, valid_at, known_at, history and authority/conflict refer to correct evidence",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TM02",
+      "mode": "temporal",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "Graphiti offline => temporal_degraded fail closed, recovers without hallucinated current truth",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "TM03",
+      "mode": "temporal",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "changing parser/prompt/model creates new graph generation and never a new external reality event",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "SC01",
+      "mode": "security",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P0",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "cross-tenant/KB access, invalid token, unscoped key cannot read/register/ingest/delete",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "SC02",
+      "mode": "security",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P0",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "no listeners outside Tailscale/private allowed scope; logs redact secrets and raw source content",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "RC01",
+      "mode": "recovery",
+      "layer": "clone",
+      "when": "D8-D11",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "restart worker/API/DocReader/Redis/DB in clone restores in-flight jobs with durable identities",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "RC02",
+      "mode": "recovery",
+      "layer": "clone",
+      "when": "D12-D15",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "restore from backup and verify file hashes, DB schema and exact KB/Revision associations",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "OB01",
+      "mode": "observability",
+      "layer": "host_read_only",
+      "when": "hourly",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "API/UI/worker/DB/Redis/Graphiti, queue depth, process restarts, log error rate, RAM/disk bounds checked",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "OB02",
+      "mode": "observability",
+      "layer": "host_read_only",
+      "when": "hourly",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "independent watchdog detects missed scheduler slots; no backfilled success; alert delivery tested",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "OB03",
+      "mode": "observability",
+      "layer": "review",
+      "when": "D1-D15",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "GitHub sanitized daily evidence includes actual results, versions, incident links, missing slots, targeted fixes",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "LR01",
+      "mode": "learning",
+      "layer": "clone",
+      "when": "D4-D15",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "each resolved incident adds reproducible red-before/green-after regression and adjacent negative test",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "LR02",
+      "mode": "learning",
+      "layer": "clone",
+      "when": "D12-D15",
+      "severity": "P1",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "mutation kills critical assertion (wrong SHA, receipt, locator, time truth, unauthorized tenant)",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "LN01",
+      "mode": "lifecycle",
+      "layer": "review",
+      "when": "gate0",
+      "severity": "P0",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "full E2E evidence, frozen oracle, alert/restore readiness, digests and gate approval required before t0",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    },
+    {
+      "id": "LN02",
+      "mode": "lifecycle",
+      "layer": "review",
+      "when": "D15",
+      "severity": "P0",
+      "required": true,
+      "oracle": "frozen source-oracle and persisted real system evidence",
+      "assertion": "360 consecutive hourly slots, 15 daily groups, all mandatory matrix cases, zero unresolved P0/P1; independent final review",
+      "evidence_required": [
+        "source_sha256",
+        "p2_sha",
+        "weknora_sha",
+        "oracle_hash",
+        "case_id",
+        "result",
+        "timestamp_utc"
+      ]
+    }
+  ]
+}

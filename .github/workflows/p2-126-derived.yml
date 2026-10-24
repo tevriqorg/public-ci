@@ -1,0 +1,124 @@
+name: P2 126 derived identity regression
+on:
+  pull_request:
+    paths: ['.github/workflows/p2-126-derived.yml', 'projects/p2-aibox-126/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  derived-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: tevriqorg/WeKnora
+          ref: ea42ab54696df94870cf8c4771249825dd3f101a
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+      - name: Scoped key and soak negative regressions
+        working-directory: tests/aibox_p2_126_soak_snapshot
+        run: python3 -m unittest discover -s tests/g1 -p 'test_*.py' -v
+      - name: Source identity and revision regression
+        run: go test ./internal/application/service -run 'TestDerived' -count=1 -timeout=120s -v
+      - name: Full affected-domain regression
+        run: |
+          gofmt -d internal/handler/knowledge_derived*.go
+          test -z "$(gofmt -l internal/types/derived_knowledge*.go internal/application/service/derived_knowledge*.go internal/application/service/manual_source_revision.go internal/handler/knowledge_derived*.go)"
+          go test ./internal/types ./internal/application/service ./internal/application/repository ./internal/handler ./internal/router -count=1 -timeout=5m
+      - name: Build exact server artifact
+        run: |
+          mkdir -p dist
+          go build -o dist/weknora-server ./cmd/server
+          jieba_module="$(go list -m -f '{{.Dir}}' github.com/yanyiwu/gojieba)"
+          cp -a "$jieba_module/deps/cppjieba/dict" dist/jieba
+          cp "$jieba_module/LICENSE" dist/JIEBA_LICENSE
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/
+          cp -a config migrations dist/
+          test -f dist/config/config.yaml
+          test -n "$(find dist/migrations/versioned -name '000121*.up.sql' -print -quit)"
+          git rev-parse HEAD > dist/SOURCE_REVISION
+          cd dist
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Relocated artifact startup without build-host dictionary
+        shell: bash
+        run: |
+          set -euo pipefail
+          relocated="$RUNNER_TEMP/p2-126-relocated"
+          mkdir -p "$relocated"
+          cp -a dist/. "$relocated/"
+          jieba_module="$(go list -m -f '{{.Dir}}' github.com/yanyiwu/gojieba)"
+          dict="$jieba_module/deps/cppjieba/dict"
+          chmod u+w "$(dirname "$dict")"
+          mv "$dict" "$dict.artifact-smoke-hidden"
+          trap 'mv "$dict.artifact-smoke-hidden" "$dict"' EXIT
+          export P2_RELOCATED_ARTIFACT="$relocated"
+          python3 - <<'PYSMOKE'
+          import os,pathlib,subprocess
+          root=pathlib.Path(os.environ['P2_RELOCATED_ARTIFACT'])
+          subprocess.run(['sha256sum','--check','SHA256SUMS'],cwd=root,check=True)
+          assert (root/'config/config.yaml').is_file()
+          assert list((root/'migrations/versioned').glob('000121*.up.sql'))
+          assert (root/'SOURCE_REVISION').read_text().strip() == 'ea42ab54696df94870cf8c4771249825dd3f101a'
+          env=dict(os.environ,JIEBA_DICT_DIR=str(root/'jieba'),WEKNORA_RUNTIME_ROLE='artifact_smoke_invalid')
+          r=subprocess.run([str(root/'weknora-server')],cwd=root,env=env,capture_output=True,timeout=30)
+          output=r.stdout+r.stderr
+          assert r.returncode!=0 and b'Invalid runtime configuration' in output, output[-2000:]
+          assert b'Dictionary file does not exist' not in output
+          print('Relocated startup reached main without build-host dictionary; expected role rejection passed')
+          PYSMOKE
+      - uses: actions/upload-artifact@v6
+        with:
+          name: p2-126-weknora-server
+          path: dist/
+          retention-days: 14
+          include-hidden-files: true
+
+  canary-harness-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Scoped credential and L2/L3 preflight negative gates (synthetic)
+        working-directory: projects/p2-aibox-126
+        run: python3 -m unittest discover -s tests/g1 -p 'test_*.py' -v
+      - name: Verify canary clients reject missing private state
+        run: |
+          python3 - <<'PYCONTRACT'
+          import json,pathlib,subprocess,sys,tempfile
+          root=pathlib.Path('projects/p2-aibox-126')
+          for script in sorted((root/'scripts').glob('issue126_canary_*.py')):
+              subprocess.run([sys.executable,'-m','py_compile',str(script)],check=True)
+              subprocess.run([sys.executable,str(script),'--help'],check=True,stdout=subprocess.DEVNULL)
+              with tempfile.TemporaryDirectory() as empty:
+                  r=subprocess.run([sys.executable,str(script),'--state-dir',empty],capture_output=True,text=True,timeout=10)
+                  d=json.loads(r.stdout)
+                  if script.name=='issue126_canary_daily.py':
+                      assert r.returncode==2 and d['result']=='PRECHECK_BLOCKED_L2_SUBSET' and d['formal_soak_started'] is False,(script,r.returncode,d)
+                  elif script.name=='issue126_canary_l3_worker_restart.py':
+                      assert r.returncode==2 and d['result']=='PRECHECK_BLOCKED_L3_CLONE_ONLY' and d['formal_soak_started'] is False,(script,r.returncode,d)
+                  elif script.name=='issue126_canary_backup_restore.py':
+                      assert r.returncode==2 and d['result']=='PRECHECK_BLOCKED_CLONE_BACKUP_RESTORE' and d['formal_soak_started'] is False,(script,r.returncode,d)
+                  else:
+                      assert r.returncode==1 and d['result'].startswith('FAIL_CANARY'),(script,r.returncode,d)
+                  print(script.name+': missing private state rejected; no PASS fabricated')
+          PYCONTRACT
+      - name: Freeze exact code-only precheck harness artifact
+        run: |
+          mkdir -p precheck-artifact
+          git archive HEAD projects/p2-aibox-126 | tar -x --strip-components=2 -C precheck-artifact
+          git rev-parse HEAD > precheck-artifact/PUBLIC_CI_REVISION
+          cd precheck-artifact
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: p2-126-precheck-harness
+          path: precheck-artifact/
+          retention-days: 30
+          include-hidden-files: true
