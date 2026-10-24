@@ -74,6 +74,7 @@ jobs:
           name: p2-126-weknora-server
           path: dist/
           retention-days: 14
+          include-hidden-files: true
 
   canary-harness-contract:
     runs-on: ubuntu-latest
@@ -120,3 +121,4 @@ jobs:
           name: p2-126-precheck-harness
           path: precheck-artifact/
           retention-days: 30
+          include-hidden-files: true
