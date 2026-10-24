@@ -142,6 +142,8 @@ def _assert_dedicated_storage(root: Path):
 def verify_canary_runtime(root: Path, state: dict, env: dict, processes: dict):
     """Validate actual api+worker effective environment, not only unit config."""
     root = Path(root)
+    if env.get("AUTO_MIGRATE") != "false":
+        raise ValueError("replica startup migrations must be explicitly disabled")
     clone = state.get("clone_db", "")
     original = state.get("original_db", "")
     if (not isinstance(clone, str) or not re.fullmatch(r"aibox126_canary_[a-zA-Z0-9_]+", clone)
@@ -203,6 +205,8 @@ def verify_live_canary(root: Path):
             raise ValueError("effective canary executable differs from exact artifact")
         if os.stat(process / "exe").st_ino != binary.stat().st_ino or os.stat(process / "exe").st_dev != binary.stat().st_dev:
             raise ValueError("effective process executable inode differs from verified artifact")
+        if (process / "cwd").resolve() != binary.parent:
+            raise ValueError("canary runtime working directory is not the exact artifact release")
         raw = (process / "environ").read_bytes()
         processes[role] = dict(x.split("=", 1) for x in raw.decode().split("\0") if "=" in x)
     verify_canary_runtime(root, state, env, processes)
