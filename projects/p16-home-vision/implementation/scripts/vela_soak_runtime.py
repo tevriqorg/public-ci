@@ -4,6 +4,7 @@ import fcntl
 import hashlib
 import json
 import os
+import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,17 @@ class EvidenceStore:
         self.root = Path(root)
         self.runs = self.root / "runs"
         self.runs.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.root / "runs.sqlite3"
+        # Run files are authority. Rebuild under the writer lock after a crash;
+        # append uses indexed lookups instead of rehashing all prior runs.
+        with (self.root / ".evidence-writer.lock").open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            prior = self.records()
+            with sqlite3.connect(self.index_path) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, record TEXT NOT NULL)")
+                db.execute("DELETE FROM runs")
+                db.executemany("INSERT INTO runs VALUES (?, ?)",
+                               [(r["run_id"], json.dumps(r)) for r in prior])
 
     def records(self):
         records = []
@@ -34,18 +46,23 @@ class EvidenceStore:
     def append(self, record):
         with (self.root / ".evidence-writer.lock").open("a+") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return self._append_locked(record)
+            with sqlite3.connect(self.index_path) as db:
+                db.execute("BEGIN IMMEDIATE")
+                name = self._append_locked(record, db)
+                db.execute("INSERT INTO runs VALUES (?, ?)",
+                           (record["run_id"], json.dumps(record)))
+                return name
 
-    def _append_locked(self, record):
+    def _append_locked(self, record, db):
         required = {"run_id", "source_sha", "scenario_id", "seed", "status", "timestamp_utc"}
         if not required <= record.keys() or record["status"] not in ("PASS", "FAIL", "BLOCKED"):
             raise ValueError("INVALID_RUN_RECORD")
-        prior = self.records()
-        if any(r["run_id"] == record["run_id"] for r in prior):
+        if db.execute("SELECT 1 FROM runs WHERE run_id = ?", (record["run_id"],)).fetchone():
             raise ValueError("DUPLICATE_RUN_ID")
         recovery = record.get("recovery_of")
         if recovery:
-            original = next((r for r in prior if r["run_id"] == recovery), None)
+            row = db.execute("SELECT record FROM runs WHERE run_id = ?", (recovery,)).fetchone()
+            original = json.loads(row[0]) if row else None
             if original is None or original["status"] != "FAIL":
                 raise ValueError("RECOVERY_WITHOUT_ORIGINAL_FAIL")
             if (original["scenario_id"], original["seed"]) != (record["scenario_id"], record["seed"]):

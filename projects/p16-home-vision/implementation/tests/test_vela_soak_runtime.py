@@ -35,7 +35,31 @@ class RuntimeTests(unittest.TestCase):
             key = store.append(record())
             (store.runs / (key+".json")).write_text(json.dumps(record(status="PASS")))
             with self.assertRaisesRegex(ValueError, "EVIDENCE_HASH_MISMATCH"):
-                store.append(record(run_id="next"))
+                store.records()
+            with self.assertRaisesRegex(ValueError, "EVIDENCE_HASH_MISMATCH"):
+                EvidenceStore(d)
+
+    def test_append_does_not_rescan_history_and_restart_rebuilds_index(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = EvidenceStore(d)
+            store.append(record())
+            store.records = lambda: self.fail("append must use indexed lookup")
+            for i in range(100):
+                store.append(record(run_id=f"run-{i}"))
+            restarted = EvidenceStore(d)
+            with self.assertRaisesRegex(ValueError, "DUPLICATE_RUN_ID"):
+                restarted.append(record())
+            restarted.append(record(run_id="recovered", status="PASS", recovery_of="original"))
+            self.assertEqual(len(restarted.records()), 102)
+
+    def test_two_store_instances_share_index(self):
+        with tempfile.TemporaryDirectory() as d:
+            first, second = EvidenceStore(d), EvidenceStore(d)
+            first.append(record())
+            with self.assertRaisesRegex(ValueError, "DUPLICATE_RUN_ID"):
+                second.append(record())
+            second.append(record(run_id="recovered", status="PASS", recovery_of="original"))
+            self.assertEqual(len(first.records()), 2)
 
     def test_recovery_requires_same_failed_scenario_and_seed(self):
         with tempfile.TemporaryDirectory() as d:
