@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "implementation/scripts"))
-from vela_soak_runtime import EvidenceStore, continuous, run_cycle
+from vela_soak_runtime import EvidenceStore, continuous, run_cycle, cycle_lock, command_handler
 CATALOG = json.loads((ROOT / "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json").read_text())
 
 
@@ -91,6 +91,29 @@ class RuntimeTests(unittest.TestCase):
             result=run_cycle(CATALOG,{},EvidenceStore(d),source_sha="a"*40,guard=guard)
             self.assertEqual(len(result["results"]),1)
             self.assertFalse(result["complete"])
+
+    def test_cycle_lock_rejects_second_writer_and_releases(self):
+        with tempfile.TemporaryDirectory() as d:
+            with cycle_lock(d):
+                with self.assertRaises(BlockingIOError):
+                    with cycle_lock(d):
+                        self.fail("second writer entered")
+            with cycle_lock(d):
+                store = EvidenceStore(d)
+                with self.assertRaises(BlockingIOError):
+                    run_cycle(CATALOG, {}, store, source_sha="a"*40, guard=lambda:None)
+
+    def test_real_subprocess_timeout_is_failure_and_loop_can_continue(self):
+        slow = command_handler([sys.executable, "-c", "import time; time.sleep(60)"],
+                               cwd=ROOT, timeout_seconds=0.05)
+        outcome = slow({})
+        self.assertEqual(outcome["status"], "FAIL")
+        self.assertTrue(outcome["timed_out"])
+        good = command_handler([sys.executable, "-c", "pass"], cwd=ROOT, timeout_seconds=5)
+        self.assertEqual(good({})["status"], "PASS")
+        bad = command_handler([sys.executable, "-c", "raise SystemExit(7)"],
+                              cwd=ROOT, timeout_seconds=5)
+        self.assertEqual(bad({})["exit_code"], 7)
 
     def test_continuous_process_runs_until_stop(self):
         calls=[]

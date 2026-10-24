@@ -5,6 +5,9 @@ import hashlib
 import json
 import os
 import sqlite3
+import signal
+import subprocess
+from contextlib import contextmanager
 import time
 import uuid
 from datetime import datetime, timezone
@@ -86,6 +89,11 @@ class EvidenceStore:
 
 
 def run_cycle(catalog, handlers, store, *, source_sha, guard, clock=None):
+    with cycle_lock(store.root):
+        return _run_cycle(catalog, handlers, store, source_sha=source_sha, guard=guard, clock=clock)
+
+
+def _run_cycle(catalog, handlers, store, *, source_sha, guard, clock=None):
     """Execute registered scenarios; unknown handlers are BLOCKED, never skipped."""
     from vela_g0_validate import inspect
     if inspect(catalog):
@@ -132,3 +140,47 @@ def continuous(cycle, *, stop_requested, interval_seconds=60, wait=time.sleep):
         cycle()
         if not stop_requested():
             wait(interval_seconds)
+
+
+@contextmanager
+def cycle_lock(root):
+    """Hold across the entire cycle, not only an individual evidence append."""
+    path = Path(root)
+    path.mkdir(parents=True, exist_ok=True)
+    with (path / ".cycle.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
+def command_handler(argv, *, cwd, timeout_seconds):
+    """Run an approved test command without shell; timeout kills its process group.
+
+    Child output is deliberately not collected here: test-specific evidence must
+    redact and bound artifacts. Exit status alone does not establish an oracle.
+    """
+    if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(v, str) for v in argv):
+        raise ValueError("INVALID_COMMAND")
+    if timeout_seconds <= 0:
+        raise ValueError("INVALID_TIMEOUT")
+    def execute(scenario):
+        started = time.monotonic()
+        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+        timed_out = False
+        try:
+            code = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            code = None
+        finally:
+            # Clean surviving descendants even if their parent exited normally.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        return {"status": "FAIL" if timed_out or code != 0 else "PASS",
+                "exit_code": code, "timed_out": timed_out,
+                "elapsed_seconds": round(time.monotonic() - started, 3)}
+    return execute
