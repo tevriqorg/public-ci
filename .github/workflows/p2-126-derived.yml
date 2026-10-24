@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: tevriqorg/WeKnora
-          ref: ea42ab54696df94870cf8c4771249825dd3f101a
+          ref: b2ed466773fd53de443265b9b80f4eb48ef3e75f
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
@@ -61,7 +61,7 @@ jobs:
           subprocess.run(['sha256sum','--check','SHA256SUMS'],cwd=root,check=True)
           assert (root/'config/config.yaml').is_file()
           assert list((root/'migrations/versioned').glob('000121*.up.sql'))
-          assert (root/'SOURCE_REVISION').read_text().strip() == 'ea42ab54696df94870cf8c4771249825dd3f101a'
+          assert (root/'SOURCE_REVISION').read_text().strip() == 'b2ed466773fd53de443265b9b80f4eb48ef3e75f'
           env=dict(os.environ,JIEBA_DICT_DIR=str(root/'jieba'),WEKNORA_RUNTIME_ROLE='artifact_smoke_invalid')
           r=subprocess.run([str(root/'weknora-server')],cwd=root,env=env,capture_output=True,timeout=30)
           output=r.stdout+r.stderr
