@@ -1,0 +1,42 @@
+schema: 1
+transfer_hub:
+  version: "0.5.5"
+  python: "3.12"
+  fastapi: ">=0.115,<1"
+resolution:
+  browser_resolver:
+    image: "p20-browser-resolver:0.5.1"
+    network_policy: "public-http(s)-only"
+downloaders:
+  uav:
+    version: "3.1.4"
+    commit: "693a0c3bb0b95b36d8c40fccea1ca75a774f8857"
+    repository: "https://github.com/Alos21750/UAV-Downloader"
+  aria2:
+    version: "1.37.0"
+  yt-dlp:
+    version: "2026.08.19"
+  gallery-dl:
+    version: "1.32.12"
+  n_m3u8dl_re:
+    version: "0.6.0-beta"
+packaging:
+  format: "zip-aes256"
+  encryption: "AES-256"
+delivery:
+  qq_flash:
+    adapter: "qqxfer-api /v1/upload with P20 idempotency key"
+    current_api_version: "0.3.0"
+  cmcloud:
+    mode: "transit"
+    control_plane: "Tokyo Credential Center"
+    data_plane: "direct EOS/CDN signed capability"
+    credential: "server-only Authorization"
+notes:
+  - "Downloader versions are pinned as the P20 Transfer Hub 0.5.5 production baseline."
+  - "Do not silently upgrade production tools; validate the full transfer pipeline first."
+generated_by: "ChatGPT"
+
+mcp:
+  python_sdk: "2.2.0"
+  default_transport: "stdio"

@@ -1,0 +1,13 @@
+{
+  "type": "http-post",
+  "name": "p20-flash-events",
+  "enable": true,
+  "token": "<same OneBot token used by qqxfer-api>",
+  "reportSelfMessage": false,
+  "reportOfflineMessage": false,
+  "messageFormat": "array",
+  "debug": false,
+  "url": "http://<TOKYO_TAILSCALE_IP>:17600/v1/events/onebot",
+  "enableHeart": false,
+  "heartInterval": 30000
+}

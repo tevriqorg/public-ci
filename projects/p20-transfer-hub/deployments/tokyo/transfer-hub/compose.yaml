@@ -1,0 +1,69 @@
+services:
+  transfer-hub:
+    image: "${P20_TRANSFER_IMAGE:-p20-transfer-hub:0.5.15}"
+    build:
+      context: ../../../transfer_hub
+    container_name: p20-transfer-hub
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      P20_TRANSFER_BIND: "${P20_TRANSFER_BIND:-127.0.0.1}"
+      P20_TRANSFER_PORT: "${P20_TRANSFER_PORT:-17614}"
+      P20_TRANSFER_DATA: "/var/lib/p20-transfer"
+      P20_TRANSFER_API_TOKEN_FILE: "/var/lib/p20-transfer/api.token"
+      P20_TRANSFER_SECRETS_DIR: "/var/lib/p20-transfer/secrets"
+      P20_TRANSFER_PUBLIC_URL: "${P20_TRANSFER_PUBLIC_URL:-http://100.84.55.11:17610}"
+      P20_BROWSER_RESOLVER_URL: "${P20_BROWSER_RESOLVER_URL:-http://127.0.0.1:17611}"
+      P20_RUNTIME_AGENT_URL: "${P20_RUNTIME_AGENT_URL:-http://127.0.0.1:17613}"
+      P20_RUNTIME_AGENT_TOKEN_FILE: "/var/lib/p20-transfer/runtime-agent.token"
+      P20_FETCH_CONCURRENCY: "${P20_FETCH_CONCURRENCY:-2}"
+      P20_PROCESS_CONCURRENCY: "${P20_PROCESS_CONCURRENCY:-1}"
+      P20_DELIVERY_CONCURRENCY: "${P20_DELIVERY_CONCURRENCY:-1}"
+      P20_STAGE_LEASE_SECONDS: "${P20_STAGE_LEASE_SECONDS:-60}"
+      P20_ARIA2_URL: "http://127.0.0.1:17618/jsonrpc"
+      P20_ARIA2_SECRET_FILE: "/var/lib/p20-transfer/aria2/rpc.secret"
+      P20_QQXFER_URL: "${P20_QQXFER_URL:-http://100.84.55.11:17600}"
+      P20_QQXFER_TOKEN_FILE: "/run/secrets/qqxfer-api-token"
+      P20_LOCAL_FILE_ROOTS: "/var/lib/jable-downloader-data"
+      P20_NOTIFY_WEBHOOK_URL: "${P20_NOTIFY_WEBHOOK_URL:-http://100.84.55.11:8651/webhooks/p20-watcher}"
+      P20_NOTIFY_WEBHOOK_SECRET_FILE: "/var/lib/p20-transfer/secrets/hermes-p20-watcher.secret"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-H", "X-P20-Healthcheck: 1", "http://127.0.0.1:17614/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - /home/ubuntu/p20-transfer:/var/lib/p20-transfer
+      - /home/ubuntu/qqxfer-api/api.token:/run/secrets/qqxfer-api-token:ro
+      - /var/lib/jable-downloader-data:/var/lib/jable-downloader-data:ro
+
+  watchd:
+    image: "${P20_TRANSFER_IMAGE:-p20-transfer-hub:0.5.15}"
+    container_name: p20-watchd
+    restart: unless-stopped
+    network_mode: host
+    command: ["p20-watchd"]
+    environment:
+      P20_TRANSFER_DATA: "/var/lib/p20-transfer"
+      P20_QQ_SPOOL_ROOT: "/var/lib/qqxfer-spool"
+      P20_WATCHER_HUB_URL: "${P20_TRANSFER_PUBLIC_URL:-http://100.84.55.11:17610}"
+      P20_TRANSFER_PUBLIC_URL: "${P20_TRANSFER_PUBLIC_URL:-http://100.84.55.11:17610}"
+      P20_NOTIFY_WEBHOOK_URL: "${P20_NOTIFY_WEBHOOK_URL:-http://100.84.55.11:8651/webhooks/p20-watcher}"
+      P20_NOTIFY_WEBHOOK_SECRET_FILE: "/var/lib/p20-transfer/secrets/hermes-p20-watcher.secret"
+      P20_NOTIFY_RETRY_SECONDS: "60"
+      GH_CONFIG_DIR: "/run/gh-config"
+    volumes:
+      - /home/ubuntu/p20-transfer:/var/lib/p20-transfer
+      - /home/ubuntu/qqxfer-llbot/llbot_config/qqxfer-spool:/var/lib/qqxfer-spool
+      - /home/ubuntu/.local/bin/gh:/usr/local/bin/gh:ro
+      - /home/ubuntu/.config/gh/hosts.yml:/run/gh-config/hosts.yml:ro
+
+  browser-resolver:
+    image: "${P20_BROWSER_RESOLVER_IMAGE:-p20-browser-resolver:0.5.1}"
+    build:
+      context: ../../../transfer_hub
+      dockerfile: browser_resolver/Dockerfile
+    container_name: p20-browser-resolver
+    restart: "no"
+    network_mode: host

@@ -1,0 +1,92 @@
+diff --git a/src/ntqqapi/api/file.ts b/src/ntqqapi/api/file.ts
+index 43b8cb7..8ee905e 100644
+--- a/src/ntqqapi/api/file.ts
++++ b/src/ntqqapi/api/file.ts
+@@ -151,6 +151,10 @@ export class NTQQFileApi extends Service {
+     )
+   }
+
++  async stopFlashFileUpload(fileSetId: string) {
++    return await this.ctx.pmhq.invoke('nodeIKernelFlashTransferService/stopFileSetUpload', [fileSetId])
++  }
++
+   async downloadFlashFile(fileSetId: string, sceneType: number = 1) {
+     return await this.ctx.pmhq.invoke('nodeIKernelFlashTransferService/startFileSetDownload',
+       [
+diff --git a/src/onebot11/action/index.ts b/src/onebot11/action/index.ts
+index 465701b..51d4927 100644
+--- a/src/onebot11/action/index.ts
++++ b/src/onebot11/action/index.ts
+@@ -97,6 +97,7 @@ import { VoiceMsg2Text } from '@/onebot11/action/llbot/msg/VoiceMsg2Text'
+ import { SendPB } from './llbot/system/SendPB'
+ import { GetRKey } from '@/onebot11/action/llbot/file/GetRkey'
+ import { UploadFlashFile } from '@/onebot11/action/llbot/file/UploadFlashFile'
++import { CancelFlashFile } from '@/onebot11/action/llbot/file/CancelFlashFile'
+ import { ReShareFlashFile } from '@/onebot11/action/llbot/file/ReShareFlashFile'
+ import { GetQQAvatar } from '@/onebot11/action/llbot/user/GetQQAvatar'
+ import { DownloadFlashFile } from '@/onebot11/action/llbot/file/DownloadFlashFile'
+@@ -132,6 +133,7 @@ export function initActionMap(adapter: Adapter) {
+     new GetFlashFileInfo(adapter),
+     new DownloadFlashFile(adapter),
+     new UploadFlashFile(adapter),
++    new CancelFlashFile(adapter),
+     new ReShareFlashFile(adapter),
+     new GetRKey(adapter),
+     new SendPB(adapter),
+diff --git a/src/onebot11/action/llbot/file/CancelFlashFile.ts b/src/onebot11/action/llbot/file/CancelFlashFile.ts
+new file mode 100644
+index 0000000..e361cff
+--- /dev/null
++++ b/src/onebot11/action/llbot/file/CancelFlashFile.ts
+@@ -0,0 +1,22 @@
++import { BaseAction, Schema } from '@/onebot11/action/BaseAction'
++import { ActionName } from '@/onebot11/action/types'
++
++interface Payload {
++  file_set_id: string
++}
++
++interface Response {
++  cancelled: boolean
++}
++
++export class CancelFlashFile extends BaseAction<Payload, Response> {
++  actionName = ActionName.CancelFlashFile
++  payloadSchema = Schema.object({
++    file_set_id: Schema.string().required(),
++  })
++
++  async _handle(payload: Payload) {
++    await this.ctx.ntFileApi.stopFlashFileUpload(payload.file_set_id)
++    return { cancelled: true }
++  }
++}
+diff --git a/src/onebot11/action/types.ts b/src/onebot11/action/types.ts
+index f13ad07..0027d34 100644
+--- a/src/onebot11/action/types.ts
++++ b/src/onebot11/action/types.ts
+@@ -20,6 +20,7 @@ export enum ActionName {
+   GetFlashFileInfo = 'get_flash_file_info',
+   DownloadFlashFile = 'download_flash_file',
+   UploadFlashFile = 'upload_flash_file',
++  CancelFlashFile = 'cancel_flash_file',
+   ReShareFlashFile = 'reshare_flash_file',
+   GetRKey = "get_rkey",
+   SendPB = "send_pb",
+diff --git a/src/onebot11/connect/http.ts b/src/onebot11/connect/http.ts
+index 942de47..5b5e70c 100644
+--- a/src/onebot11/connect/http.ts
++++ b/src/onebot11/connect/http.ts
+@@ -143,10 +143,10 @@ class OB11Http {
+     const authQuery = c.req.query('access_token')
+     if (authHeader) {
+       clientToken = authHeader.split('Bearer ').pop()!
+-      this.ctx.logger.info('receive http header token', clientToken)
++      this.ctx.logger.info('receive http header token', '<redacted>')
+     } else if (authQuery) {
+       clientToken = authQuery
+-      this.ctx.logger.info('receive http url token', clientToken)
++      this.ctx.logger.info('receive http url token', '<redacted>')
+     }
+
+     if (clientToken !== serverToken) {

@@ -1,0 +1,69 @@
+name: P20 0.5.15 public CI snapshot
+
+on:
+  pull_request:
+    paths:
+      - 'projects/p20-transfer-hub/**'
+      - '.github/workflows/p20-0515-build.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish immutable P20 0.5.15 candidate image
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python dependencies
+        working-directory: projects/p20-transfer-hub/transfer_hub
+        run: python -m pip install -e '.[test,mcp]'
+      - name: Full Python regression
+        working-directory: projects/p20-transfer-hub
+        run: PYTHONPATH=transfer_hub python -m pytest -q transfer_hub/tests
+      - name: Version check
+        working-directory: projects/p20-transfer-hub
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          assert 'version = "0.5.15"' in Path('transfer_hub/pyproject.toml').read_text()
+          assert '__version__ = "0.5.15"' in Path('transfer_hub/transfer_hub/__init__.py').read_text()
+          assert json.loads(Path('transfer_hub/web/package.json').read_text())['version'] == '0.5.15'
+          PY
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish on public GitHub Actions runner (no VPS compiler)
+        uses: docker/build-push-action@v6
+        with:
+          context: projects/p20-transfer-hub/transfer_hub
+          file: projects/p20-transfer-hub/transfer_hub/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/tevriqorg/public-ci:p20-transfer-hub-0.5.15
+          provenance: false
