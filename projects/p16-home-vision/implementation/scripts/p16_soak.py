@@ -60,6 +60,9 @@ def main(argv=None):
         handlers={k:v for k,v in handlers.items() if k==a.scenario_id}
     def guard():
         import shutil
+        size=sum(p.stat().st_size for p in a.state.rglob('*') if p.is_file())
+        if size > 64*1024**2:
+            raise OSError('EVIDENCE_BUDGET_EXHAUSTED')
         if shutil.disk_usage(a.state).free < 6*1024**3:
             raise OSError('HOST_FREE_BELOW_LIMIT')
     def cycle():

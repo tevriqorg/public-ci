@@ -38,3 +38,13 @@ jobs:
       - name: G0 adaptive test strategy
         working-directory: projects/p16-home-vision
         run: python -m unittest discover -s implementation/tests -p 'test_vela_*.py' -v
+      - name: Exercise executable replay against real software mutation oracle
+        working-directory: projects/p16-home-vision
+        run: |
+          SHA=$(sed -n 's/^source_commit=//p' G0_SOAK_REVISION)
+          python implementation/bin/p16-soak scenario --scenario-id S015 --source-sha "$SHA" --state "$RUNNER_TEMP/p16-cli-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p16-cli-evidence
+          path: ${{ runner.temp }}/p16-cli-evidence
