@@ -36,6 +36,9 @@ jobs:
           cp -a "$jieba_module/deps/cppjieba/dict" dist/jieba
           cp "$jieba_module/LICENSE" dist/JIEBA_LICENSE
           cp LICENSE THIRD_PARTY_NOTICES.md dist/
+          cp -a config migrations dist/
+          test -f dist/config/config.yaml
+          test -n "$(find dist/migrations/versioned -name '000121*.up.sql' -print -quit)"
           git rev-parse HEAD > dist/SOURCE_REVISION
           cd dist
           find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
@@ -56,6 +59,9 @@ jobs:
           import os,pathlib,subprocess
           root=pathlib.Path(os.environ['P2_RELOCATED_ARTIFACT'])
           subprocess.run(['sha256sum','--check','SHA256SUMS'],cwd=root,check=True)
+          assert (root/'config/config.yaml').is_file()
+          assert list((root/'migrations/versioned').glob('000121*.up.sql'))
+          assert (root/'SOURCE_REVISION').read_text().strip() == 'ea42ab54696df94870cf8c4771249825dd3f101a'
           env=dict(os.environ,JIEBA_DICT_DIR=str(root/'jieba'),WEKNORA_RUNTIME_ROLE='artifact_smoke_invalid')
           r=subprocess.run([str(root/'weknora-server')],cwd=root,env=env,capture_output=True,timeout=30)
           output=r.stdout+r.stderr
