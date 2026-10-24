@@ -26,3 +26,16 @@ class Delivery(unittest.TestCase):
   with patch.object(m.subprocess,'run',side_effect=subprocess.TimeoutExpired('gh',25)):
    m.alarm('test.service','FAIL');self.assertEqual(m.state['alerts'],{})
 if __name__=='__main__':unittest.main()
+
+class OutboxRecovery(Delivery):
+ def test_failure_survives_recovery_and_executor_restart(self):
+  with patch.object(m.subprocess,'run',return_value=subprocess.CompletedProcess([],1,stdout='')):
+   m.alarm('test.service','FAIL')
+  self.assertTrue(m.state.get('pending_alerts'),'undelivered failure must be durable')
+  m.recovered('test.service')
+  import json
+  m.state=json.loads((self.root/'state.json').read_text())
+  with patch.object(m.subprocess,'run',return_value=subprocess.CompletedProcess([],0,stdout='https://github.com/example/recovered\n')):
+   m.flush_outbox(force=True)
+  self.assertEqual(m.state['pending_alerts'],{})
+  self.assertEqual(len(m.state['alerts']),1)

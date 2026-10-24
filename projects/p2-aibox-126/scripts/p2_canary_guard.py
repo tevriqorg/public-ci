@@ -144,6 +144,8 @@ def verify_canary_runtime(root: Path, state: dict, env: dict, processes: dict):
     root = Path(root)
     if env.get("AUTO_MIGRATE") != "false":
         raise ValueError("replica startup migrations must be explicitly disabled")
+    if env.get("DB_HOST") != "127.0.0.1" or env.get("DB_PORT") != "55432":
+        raise ValueError("canary DB endpoint is outside reviewed container mapping")
     clone = state.get("clone_db", "")
     original = state.get("original_db", "")
     if (not isinstance(clone, str) or not re.fullmatch(r"aibox126_canary_[a-zA-Z0-9_]+", clone)
@@ -224,6 +226,78 @@ def verify_release_tree(release: Path, state: dict):
     return max(versions)
 
 
+LAUNCH_PROPERTIES = ("FragmentPath", "DropInPaths", "ExecStart", "WorkingDirectory",
+                     "EnvironmentFiles", "Environment", "NeedDaemonReload")
+
+
+def validate_next_start(root, state, role, properties, files):
+    """Validate the *loaded next launch* and the bytes it will read before restart."""
+    if role not in {"api", "worker"} or set(properties) != set(LAUNCH_PROPERTIES):
+        raise ValueError("incomplete next-start unit snapshot")
+    if properties["NeedDaemonReload"] != "no":
+        raise ValueError("unit files changed without daemon reload")
+    release = Path(root) / "releases" / state["source_sha"]
+    binary = str(release / "weknora-server")
+    if properties["WorkingDirectory"] != str(release):
+        raise ValueError("next-start cwd is not exact artifact")
+    command = re.search(r"path=([^ ;]+) ; argv\[\]=([^;]+) ;", properties["ExecStart"])
+    if properties["ExecStart"].count("{") != 1 or properties["ExecStart"].count("}") != 1:
+        raise ValueError("multiple next-start commands are forbidden")
+    if not command or command.group(1) != binary or shlex.split(command.group(2)) != [binary]:
+        raise ValueError("next-start executable differs from reviewed artifact")
+    rawfiles = properties["EnvironmentFiles"]
+    env_paths = re.findall(r"(/[^ ]+) \(ignore_errors=no\)", rawfiles)
+    if " ".join(p + " (ignore_errors=no)" for p in env_paths) != rawfiles:
+        raise ValueError("ambiguous or optional next-start environment file")
+    paths = [properties["FragmentPath"], *shlex.split(properties["DropInPaths"]), *env_paths]
+    if set(paths) != set(files):
+        raise ValueError("next-start file inventory mismatch")
+    effective = dict(item.split("=", 1) for item in shlex.split(properties["Environment"]))
+    for path in env_paths:
+        effective.update(parse_private_env(files[path]))
+    if effective.get("AUTO_MIGRATE") != "false":
+        raise ValueError("next-start would enable migrations")
+    if effective.get("WEKNORA_RUNTIME_ROLE") != role or effective.get("SERVER_HOST") != "127.0.0.1" or effective.get("SERVER_PORT") != ("18082" if role == "api" else "18083"):
+        raise ValueError("next-start role or listener changed")
+    normalized = dict(properties)
+    normalized["ExecStart"] = binary  # Exclude volatile PID/start/exit fields from systemctl show.
+    fingerprint = hashlib.sha256(json.dumps({"properties": normalized,
+        "files_sha256": {p: hashlib.sha256(v.encode()).hexdigest() for p,v in files.items()}},
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if state.get("launch_snapshot_sha256", {}).get(role) != fingerprint:
+        raise ValueError("next-start configuration lacks independent exact pin")
+    return True
+
+
+def verify_next_start(root, state, role="worker"):
+    root = Path(root)
+    command = ["systemctl", "--user", "show", "aibox126-canary-" + role]
+    for name in LAUNCH_PROPERTIES:
+        command.extend(["-p", name])
+    raw = subprocess.check_output(command, text=True, timeout=10)
+    props = dict(line.split("=",1) for line in raw.splitlines() if "=" in line)
+    paths = [props.get("FragmentPath", ""), *shlex.split(props.get("DropInPaths", "")),
+             *re.findall(r"(/[^ ]+) \(ignore_errors=no\)", props.get("EnvironmentFiles", ""))]
+    files = {}
+    unitroot = Path.home() / ".config/systemd/user"
+    for name in paths:
+        path = Path(name)
+        if path.is_symlink() or not (path.is_relative_to(root) or path.is_relative_to(unitroot)):
+            raise ValueError("next-start file outside allowed private/config roots")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022 or st.st_size > 2_000_000:
+                raise ValueError("unsafe next-start configuration file")
+            if path.is_relative_to(root) and st.st_mode & 0o077:
+                raise ValueError("next-start private file is not owner-only")
+            with os.fdopen(fd, "r", closefd=False) as f:
+                files[name] = f.read(2_000_001)
+        finally:
+            os.close(fd)
+    return validate_next_start(root,state,role,props,files)
+
+
 def verify_live_canary(root: Path):
     root = Path(root)
     state = json.loads(secure_canary_read(root, root / "canary-state.json"))
@@ -259,6 +333,10 @@ def verify_live_canary(root: Path):
                     text=True, timeout=5).strip())
     if not listener_owned_by_pid(api_pid, 18082):
         raise ValueError("canary API port is not owned by verified API process")
+    mapping = subprocess.run(["docker", "port", "aiboxacc107-postgres-1", "5432/tcp"],
+                             capture_output=True, text=True, timeout=10)
+    if mapping.returncode != 0 or mapping.stdout.strip() != "127.0.0.1:55432":
+        raise ValueError("verified database endpoint is not the inspected container")
     db_user = env.get("DB_USER", "")
     if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", db_user):
         raise ValueError("invalid clone database role")

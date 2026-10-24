@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 
-from p2_canary_guard import verify_live_canary
+from p2_canary_guard import verify_live_canary, verify_next_start
 
 API = "aibox126-canary-api"
 WORKER = "aibox126-canary-worker"
@@ -89,15 +89,24 @@ def run(root, source_root):
     script = source_root / "scripts" / "issue126_canary_at_rest.py"
     if not script.is_file() or script.is_symlink():
         raise ValueError("pinned At-rest probe missing")
-    lock = root / "l2-preflight.lock"
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    # Governed deployments must hold this same developer lease.
+    devfd = os.open(root / "issue126-dev.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
+        fcntl.flock(devfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        os.close(devfd)
+        raise
+    lock = root / "l2-preflight.lock"
+    fd = None
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         if not stat.S_ISREG(os.fstat(fd).st_mode) or os.fstat(fd).st_mode & 0o077:
             raise ValueError("unsafe L3 lock")
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # No other preflight can be interrupted; old UAT never touched.
         if not active(API) or not active(WORKER) or active(L1) or active(L2):
             raise ValueError("another preflight active or clone not healthy")
+        verify_next_start(root, state, "worker")
         before = main_pid(WORKER)
         started = time.monotonic()
         try:
@@ -134,8 +143,11 @@ def run(root, source_root):
             if not active(WORKER):
                 systemctl("start", WORKER + ".service", timeout=30)
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        if fd is not None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        fcntl.flock(devfd, fcntl.LOCK_UN)
+        os.close(devfd)
 
 
 def main():

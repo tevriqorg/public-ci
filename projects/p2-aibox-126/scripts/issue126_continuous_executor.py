@@ -27,16 +27,32 @@ def pulse(current=None):
  notify('WATCHDOG=1')
 def ctl(*args):
  return subprocess.run(['systemctl','--user',*args],capture_output=True,text=True,timeout=15)
+def flush_outbox(force=False):
+ pending=state.setdefault('pending_alerts',{})
+ for key,entry in list(pending.items()):
+  if not force and time.time()-entry.get('last_attempt',0)<60: continue
+  entry['last_attempt']=time.time();save('state.json',state)
+  unit,status=entry['unit'],entry['status']
+  body=f'P2 #126 continuous PRECHECK executor FAILURE: unit={unit}, status={status}, event={key}; hostname=vela; formal soak remains blocked. Evidence: continuous-executor/results.jsonl. No raw data or credentials included.'
+  try:
+   r=subprocess.run(['gh','api','repos/tevriqorg/P2-AIBOX/issues/126/comments','-f','body='+body,'--jq','.html_url'],capture_output=True,text=True,timeout=25)
+   if r.returncode==0:
+    state.setdefault('alerts',{})[key]=dict(timestamp_utc=now(),url=r.stdout.strip())
+    del pending[key];save('state.json',state)
+  except subprocess.TimeoutExpired: pass
+  notify('WATCHDOG=1')
 def alarm(unit, status):
- key=hashlib.sha256((unit+status).encode()).hexdigest()[:16]
- delivered=state.setdefault('alerts',{})
- if key in delivered: return
- body=f'P2 #126 continuous PRECHECK executor FAILURE: unit={unit}, status={status}; hostname=vela; formal soak remains blocked. Evidence: continuous-executor/results.jsonl. No raw data or credentials included.'
- try:
-  r=subprocess.run(['gh','api','repos/tevriqorg/P2-AIBOX/issues/126/comments','-f','body='+body,'--jq','.html_url'],capture_output=True,text=True,timeout=25)
-  if r.returncode==0:
-   delivered[key]=dict(timestamp_utc=now(),url=r.stdout.strip()); save('state.json',state)
- except subprocess.TimeoutExpired: pass
+ active=state.setdefault('active_alerts',{})
+ key=active.setdefault(unit,hashlib.sha256((unit+status+now()).encode()).hexdigest()[:16])
+ if key not in state.setdefault('alerts',{}):
+  state.setdefault('pending_alerts',{}).setdefault(key,dict(unit=unit,status=status,created_utc=now()))
+  save('state.json',state)
+  flush_outbox(force=True)
+def recovered(unit):
+ key=state.setdefault('active_alerts',{}).pop(unit,None)
+ if key: append(dict(event='unit_recovered',unit=unit,timestamp_utc=now(),alert_event=key,notification_pending=key in state.setdefault('pending_alerts',{}),formal_soak_started=False))
+ # Pending events intentionally survive recovery and executor restart.
+ save('state.json',state)
 def main():
  global state
  os.umask(0o077)
@@ -48,6 +64,7 @@ def main():
  append(dict(event='executor_started',timestamp_utc=now(),pid=os.getpid(),mode='preparatory',trial_id=None))
  notify('READY=1')
  while True:
+  flush_outbox()
   for unit,interval in UNITS.items():
    pulse(unit)
    if unit == 'aibox126-canary-l3-preflight.service' and (ROOT/'l3-safety-block.json').exists():
@@ -74,10 +91,7 @@ def main():
    ok=r.returncode==0 and props.get('Result')=='success' and props.get('ExecMainStatus')=='0' and props.get('ActiveState')=='inactive' and props.get('ExecMainStartTimestampMonotonic') not in (None, '', '0', before)
    event=dict(event='test_completed',unit=unit,started_utc=started,ended_utc=now(),systemd=props,result='PRECHECK_UNIT_SUCCESS' if ok else 'PRECHECK_UNIT_FAILURE',trial_id=None,formal_soak_started=False)
    append(event); state['last'][unit]=time.time(); state.setdefault('failed',{})[unit]=not ok
-   if ok:
-    key=hashlib.sha256((unit+'PRECHECK_UNIT_FAILURE').encode()).hexdigest()[:16]
-    prior=state.setdefault('alerts',{}).pop(key,None)
-    if prior: append(dict(event='unit_recovered',unit=unit,timestamp_utc=now(),previous_alert=prior,formal_soak_started=False))
+   if ok: recovered(unit)
    save('state.json',state)
    if not ok: alarm(unit,event['result'])
   pulse(); time.sleep(10)

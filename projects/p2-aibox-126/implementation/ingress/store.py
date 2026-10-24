@@ -10,6 +10,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 
 class IngressError(RuntimeError):
@@ -349,7 +351,11 @@ class IngressStore:
                     os.fsync(dst.fileno())
                 if not self._verify(tmp, session["content_hash"], session["size"]):
                     raise IngressError("final object failed size/hash verification")
-                os.replace(tmp, final)
+                try:
+                    os.link(tmp, final)  # Atomic no-replace install across all sessions.
+                except FileExistsError:
+                    if final.is_symlink() or not self._verify(final, session["content_hash"], session["size"]):
+                        raise IngressError("archive target won by different content")
                 self._fsync_archive_ancestors(final.parent)
             finally:
                 tmp.unlink(missing_ok=True)
@@ -373,7 +379,10 @@ class IngressStore:
         ref = session["final_resource_ref"]
         if not ref.startswith("file://"):
             return False
-        final = Path(ref.removeprefix("file://"))
+        try:
+            final = self._local_final_path(ref)
+        except IngressError:
+            return False
         if not self._verify(final, session["content_hash"], session["size"]):
             return False
         if session["analysis_manifest_ref"]:
@@ -391,8 +400,17 @@ class IngressStore:
             con.execute("UPDATE ingest_sessions SET staging_ref='',updated_at=? WHERE ingest_id=?",
                         (time.time(), ingest_id))
 
+    def _local_final_path(self, ref: str) -> Path:
+        parsed = urlsplit(ref)
+        if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"} or parsed.query or parsed.fragment:
+            raise IngressError("final resource is not a local file URI")
+        path = Path(url2pathname(parsed.path))
+        if not path.is_absolute() or not path.resolve().is_relative_to(self.final_root.resolve()):
+            raise IngressError("final resource escapes archive root")
+        return path
+
     def final_path(self, ingest_id: str) -> Path:
         ref = self.get(ingest_id)["final_resource_ref"]
         if not ref.startswith("file://"):
             raise IngressError("final resource is not established")
-        return Path(ref.removeprefix("file://"))
+        return self._local_final_path(ref)
