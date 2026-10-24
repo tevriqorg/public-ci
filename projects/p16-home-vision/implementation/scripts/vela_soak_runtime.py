@@ -27,14 +27,19 @@ class EvidenceStore:
         self.index_path = self.root / "runs.sqlite3"
         # Run files are authority. Rebuild under the writer lock after a crash;
         # append uses indexed lookups instead of rehashing all prior runs.
-        with (self.root / ".evidence-writer.lock").open("a+") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            prior = self.records()
-            with sqlite3.connect(self.index_path) as db:
-                db.execute("CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, record TEXT NOT NULL)")
-                db.execute("DELETE FROM runs")
-                db.executemany("INSERT INTO runs VALUES (?, ?)",
-                               [(r["run_id"], json.dumps(r)) for r in prior])
+        with cycle_lock(self.root):
+            with (self.root / ".evidence-writer.lock").open("a+") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._rebuild()
+
+    def _rebuild(self):
+        prior = self.records()
+        with sqlite3.connect(self.index_path) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, record TEXT NOT NULL)")
+            db.execute("DELETE FROM runs")
+            db.executemany("INSERT INTO runs VALUES (?, ?)",
+                           [(r["run_id"], json.dumps(r)) for r in prior])
+        (self.root / ".publication-pending").unlink(missing_ok=True)
 
     def records(self):
         records = []
@@ -49,12 +54,26 @@ class EvidenceStore:
     def append(self, record):
         with (self.root / ".evidence-writer.lock").open("a+") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            marker = self.root / ".publication-pending"
+            if marker.exists():
+                self._rebuild()
+            # Durable intent precedes publication; surviving instances reconcile
+            # under the same writer lock before any indexed lookup.
+            with marker.open("w") as pending:
+                pending.flush()
+                os.fsync(pending.fileno())
+            directory = os.open(self.root, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
             with sqlite3.connect(self.index_path) as db:
                 db.execute("BEGIN IMMEDIATE")
                 name = self._append_locked(record, db)
                 db.execute("INSERT INTO runs VALUES (?, ?)",
                            (record["run_id"], json.dumps(record)))
-                return name
+            marker.unlink()
+            return name
 
     def _append_locked(self, record, db):
         required = {"run_id", "source_sha", "scenario_id", "seed", "status", "timestamp_utc"}

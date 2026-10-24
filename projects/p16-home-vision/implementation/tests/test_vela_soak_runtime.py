@@ -98,10 +98,31 @@ class RuntimeTests(unittest.TestCase):
                 with self.assertRaises(BlockingIOError):
                     with cycle_lock(d):
                         self.fail("second writer entered")
+            store = EvidenceStore(d)
             with cycle_lock(d):
-                store = EvidenceStore(d)
                 with self.assertRaises(BlockingIOError):
                     run_cycle(CATALOG, {}, store, source_sha="a"*40, guard=lambda:None)
+
+    def test_surviving_store_recovers_interrupted_publication(self):
+        with tempfile.TemporaryDirectory() as d:
+            first, survivor = EvidenceStore(d), EvidenceStore(d)
+            import sqlite3
+            with sqlite3.connect(first.index_path) as db:
+                first._append_locked(record(), db)
+            (Path(d) / ".publication-pending").touch()
+            with self.assertRaisesRegex(ValueError, "DUPLICATE_RUN_ID"):
+                survivor.append(record(status="PASS"))
+            survivor.append(record(run_id="recovered", status="PASS", recovery_of="original"))
+            self.assertEqual(len(EvidenceStore(d).records()), 2)
+
+    def test_competing_constructor_cannot_interrupt_cycle(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = EvidenceStore(d)
+            with cycle_lock(d):
+                with self.assertRaises(BlockingIOError):
+                    EvidenceStore(d)
+                store.append(record())
+            self.assertEqual(len(store.records()), 1)
 
     def test_real_subprocess_timeout_is_failure_and_loop_can_continue(self):
         slow = command_handler([sys.executable, "-c", "import time; time.sleep(60)"],
