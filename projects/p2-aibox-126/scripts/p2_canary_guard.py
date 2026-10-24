@@ -181,6 +181,49 @@ def verify_canary_runtime(root: Path, state: dict, env: dict, processes: dict):
     return True
 
 
+def verify_release_tree(release: Path, state: dict):
+    """Bind ALL runtime files to an independently pinned CI artifact inventory."""
+    release = Path(release)
+    if release.is_symlink() or not release.is_dir():
+        raise ValueError("runtime release directory is unsafe")
+    manifest = release / "SHA256SUMS"
+    verify_binary_digest(manifest, state.get("release_manifest_sha256"))
+    if manifest.stat().st_size > 2_000_000:
+        raise ValueError("runtime inventory exceeds cap")
+    listed = set()
+    for row in manifest.read_text().splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  (?:\./)?(.+)", row)
+        if not match:
+            raise ValueError("invalid runtime inventory row")
+        digest, name = match.groups()
+        part = Path(name)
+        if part.is_absolute() or ".." in part.parts or name in listed or name == "SHA256SUMS":
+            raise ValueError("unsafe or duplicate runtime inventory path")
+        path = release / part
+        if any(parent.is_symlink() for parent in [path, *path.parents] if parent != release.parent):
+            raise ValueError("runtime inventory contains symlink")
+        verify_binary_digest(path, digest)
+        listed.add(name)
+    actual = set()
+    for path in release.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("runtime release contains symlink")
+        if path.is_file() and path != manifest:
+            actual.add(path.relative_to(release).as_posix())
+    if actual != listed:
+        raise ValueError("runtime inventory omits or adds files")
+    required = {"weknora-server", "SOURCE_REVISION", "config/config.yaml"}
+    if not required <= listed:
+        raise ValueError("runtime artifact missing required components")
+    if (release / "SOURCE_REVISION").read_text().strip() != state.get("source_sha"):
+        raise ValueError("runtime tree source differs from binary source")
+    versions = [int(m.group(1)) for name in listed
+                if (m := re.fullmatch(r"migrations/versioned/([0-9]+)_.+\.up\.sql", name))]
+    if not versions or max(versions) != state.get("schema_version"):
+        raise ValueError("runtime schema version is not independently pinned")
+    return max(versions)
+
+
 def verify_live_canary(root: Path):
     root = Path(root)
     state = json.loads(secure_canary_read(root, root / "canary-state.json"))
@@ -193,6 +236,7 @@ def verify_live_canary(root: Path):
     if not binary.is_file():
         raise ValueError("canary pinned artifact unavailable")
     verify_binary_digest(binary, state.get("binary_sha256"))
+    schema_version = verify_release_tree(binary.parent, state)
     for role in ("api", "worker"):
         unit = "aibox126-canary-" + role
         pid = subprocess.check_output(["systemctl", "--user", "show", unit,
@@ -215,4 +259,14 @@ def verify_live_canary(root: Path):
                     text=True, timeout=5).strip())
     if not listener_owned_by_pid(api_pid, 18082):
         raise ValueError("canary API port is not owned by verified API process")
+    db_user = env.get("DB_USER", "")
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", db_user):
+        raise ValueError("invalid clone database role")
+    check = subprocess.run(["docker", "exec", "aiboxacc107-postgres-1", "psql",
+                            "-U", db_user, "-d", state["clone_db"], "-At",
+                            "-v", "ON_ERROR_STOP=1", "-c",
+                            "SELECT version,dirty FROM schema_migrations"],
+                           capture_output=True, text=True, timeout=10)
+    if check.returncode != 0 or check.stdout.strip() != str(schema_version) + "|f":
+        raise ValueError("effective clone schema differs from reviewed artifact")
     return state
