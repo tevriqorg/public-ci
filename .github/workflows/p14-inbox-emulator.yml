@@ -1,0 +1,92 @@
+name: P14 Inbox UI on Android emulator (synthetic, isolated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact public RikkaHub Inbox branch SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  inbox-android-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Validate exact source
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Checkout public Android source (not production Server)
+        uses: actions/checkout@v4
+        with:
+          repository: tevriqorg/rikkahub
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Verify source identity
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-version: '21'
+          cache: gradle
+      - name: pnpm 11
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: web-ui/pnpm-lock.yaml
+      - name: Install web UI dependencies
+        working-directory: web-ui
+        run: pnpm install --frozen-lockfile
+      - name: Test-only Google Services configuration
+        run: |
+          cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "1234567890",
+              "project_id": "rikkahub-p14-ci",
+              "storage_bucket": "rikkahub-p14-ci.appspot.com"
+            },
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:1234567890:android:0000000000000000",
+                "android_client_info": {"package_name": "me.rerere.rikkahub.debug"}
+              },
+              "api_key": [{"current_key": "AIzaSyCIOnlyPlaceholderNotARealKey000000"}]
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+      - name: Set CI version metadata to actual source
+        run: echo "P14_BUILD_SUFFIX=p14-${SOURCE_SHA:0:8}" >> "$GITHUB_ENV"
+      - name: Run Inbox UI on clean Android emulator, synthetic Entry only
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            chmod +x gradlew
+            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
+      - name: Upload UI test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p14-inbox-ui-test-report-${{ env.SOURCE_SHA }}
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: ignore
+          retention-days: 7
