@@ -38,7 +38,9 @@ def _config_and_seed_v5(db_path, *, duplicate_active=False):
 
 def test_alembic_upgrade_and_downgrade(tmp_path) -> None:
     db_path = tmp_path / "migration.db"
-    cfg = Config("alembic.ini")
+    implementation_root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(implementation_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(implementation_root / "alembic"))
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     command.upgrade(cfg, "head")
     engine = create_engine(f"sqlite:///{db_path}")
