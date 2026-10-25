@@ -3,17 +3,21 @@ from __future__ import annotations
 import hashlib
 import shutil
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.orm import sessionmaker
 
 from app.domain.archive_pipeline import ArchiveValidationError, verify_part
 from app.domain.archive_queue import retry_due_archive_jobs
 from app.domain.auto_archive import enqueue_closed_day_backlog
 from app.domain.nvr_scan import scan_camera_range
-from app.infra.media.ffprobe import FfprobeMediaProbe
+from app.infra.media.ffprobe import FfprobeMediaProbe, MediaProbeResult
 from app.infra.nvr.hikvision import HikvisionIsapiClient, build_search_request_xml
 from app.models import (
     ArchiveJob,
@@ -164,6 +168,87 @@ def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_p
     assert session.query(LocalAsset).filter_by(source_recording_id=old_source.id).count() == 1
     assert "fixture-password" not in repr(old_source)
     assert all("fixture-password" not in (event.payload_redacted or "") for event in session.query(AuditEvent).all())
+
+
+def test_two_workers_racing_one_source_create_one_verified_asset(session, tmp_path, monkeypatch):
+    """S017 injects two claim readers before either can promote the same job."""
+    nvr = NvrDevice(id="nvr-s017", name="S017 synthetic", host="fixture", timezone="UTC")
+    camera = CameraTrack(id="camera-s017", nvr_id=nvr.id, track_id="s017", camera_name="Synthetic")
+    source_start = datetime.now(timezone.utc) - timedelta(days=2)
+    source_end = source_start + timedelta(seconds=10)
+    source = SourceRecording(
+        id="source-s017", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=source_start, source_end=source_end, duration_ms=10_000,
+        source_state="available",
+    )
+    volume_root = tmp_path / "s017-volume"
+    session.add(nvr); session.flush(); session.add(camera); session.flush()
+    session.add(source); session.flush()
+    session.add(StorageVolume(
+        id="volume-s017", node_id="fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    ))
+    job = ArchiveJob(id="job-s017", source_recording_id=source.id, state="queued")
+    session.add(job)
+    session.commit()
+
+    engine = session.get_bind()
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    both_claim_reads = threading.Barrier(2)
+    payload = b"synthetic-video-payload" * 128
+    segment = SimpleNamespace(
+        track_id=source.track_id, source_start=source_start, source_end=source_end,
+        duration_ms=10_000, source_size_if_known=None, playback_uri="fixture://s017",
+    )
+
+    class FixtureClient:
+        def download_to_part(self, _uri, path, *, progress_callback=None):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            if progress_callback:
+                progress_callback(len(payload))
+            return len(payload)
+
+    class FixtureProbe:
+        def probe(self, _path):
+            return MediaProbeResult(duration_ms=10_000, has_video=True, container="mp4",
+                                    video_codec="h264", audio_codec="aac")
+
+    def synchronize_claim_read(_conn, _cursor, statement, _parameters, _context, _executemany):
+        sql = statement.lower()
+        if "from archive_jobs join source_recordings" in sql and "archive_jobs.state = ?" in sql:
+            both_claim_reads.wait(timeout=10)
+
+    monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(archive_worker, "_find_exact_segment", lambda *_args, **_kwargs: segment)
+    event.listen(engine, "after_cursor_execute", synchronize_claim_read)
+    try:
+        def run_worker(worker_id):
+            with sessions() as worker_session:
+                return archive_worker.process_one(
+                    worker_session, FixtureClient(), probe=FixtureProbe(), worker_id=worker_id,
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(run_worker, ("s017-worker-a", "s017-worker-b")))
+    finally:
+        event.remove(engine, "after_cursor_execute", synchronize_claim_read)
+
+    assert results.count(job.id) == 1
+    assert results.count(None) == 1
+    session.expire_all()
+    stored_job = session.get(ArchiveJob, job.id)
+    assets = list(session.scalars(select(LocalAsset).where(
+        LocalAsset.source_recording_id == source.id,
+        LocalAsset.verification_state == "verified",
+        LocalAsset.lifecycle_state == "present",
+    )))
+    assert stored_job is not None and stored_job.state == "completed"
+    assert stored_job.attempt_count == 1
+    assert len(assets) == 1
+    final_path = volume_root / assets[0].relative_path
+    assert final_path.is_file()
+    assert hashlib.sha256(final_path.read_bytes()).hexdigest() == assets[0].sha256
 
 
 def test_simulated_nvr_xml_error_payload_is_rejected(tmp_path):
