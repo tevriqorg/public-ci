@@ -11,13 +11,7 @@ from media_derivation.pipeline import DerivationPaths, DerivationPlan, run_deriv
 from media_derivation.probe import probe_source
 
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
-    reason="ffmpeg/ffprobe required",
-)
-
-
-def _make_hevc_sample(path: Path) -> None:
+def _make_hevc_sample(path: Path, *, required: bool = False) -> None:
     completed = subprocess.run(
         [
             "ffmpeg",
@@ -52,7 +46,10 @@ def _make_hevc_sample(path: Path) -> None:
         check=False,
     )
     if completed.returncode != 0:
-        pytest.skip(f"local ffmpeg cannot create HEVC fixture: {completed.stderr[-500:]}")
+        detail = f"ffmpeg cannot create required HEVC fixture: {completed.stderr[-500:]}"
+        if required:
+            pytest.fail(detail)
+        pytest.skip(detail)
 
 
 def _probe(path: Path) -> dict:
@@ -66,9 +63,9 @@ def _probe(path: Path) -> dict:
     return json.loads(completed.stdout)
 
 
-def test_real_derivation_keeps_raw_and_outputs_web_frames_audio(tmp_path: Path):
+def _assert_real_hevc_derivation(tmp_path: Path, *, require_encoder: bool):
     raw = tmp_path / "source.mkv"
-    _make_hevc_sample(raw)
+    _make_hevc_sample(raw, required=require_encoder)
     source = probe_source(raw)
     assert source.video_codec == "hevc"
     assert source.has_audio is True
@@ -100,5 +97,21 @@ def test_real_derivation_keeps_raw_and_outputs_web_frames_audio(tmp_path: Path):
         if line.strip()
     ]
     assert len(frame_rows) == result["frame_count"]
-    assert all("source_pts_seconds" in row for row in frame_rows)
-    assert all("absolute_epoch_seconds" in row for row in frame_rows)
+    source_pts = [row["source_pts_seconds"] for row in frame_rows]
+    absolute_times = [row["absolute_epoch_seconds"] for row in frame_rows]
+    assert all(isinstance(value, (int, float)) for value in source_pts + absolute_times)
+    assert source_pts == sorted(source_pts) and source_pts[0] >= 0
+    assert all(abs(absolute - (1_700_000_000.0 + pts)) <= 0.01
+               for pts, absolute in zip(source_pts, absolute_times))
+
+
+def test_real_derivation_keeps_raw_and_outputs_web_frames_audio(tmp_path: Path):
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg/ffprobe required")
+    _assert_real_hevc_derivation(tmp_path, require_encoder=False)
+
+
+def test_s019_required_hevc_pcm_stream_copy_preserves_pts(tmp_path: Path):
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.fail("S019 requires ffmpeg/ffprobe; scenario cannot be a skip")
+    _assert_real_hevc_derivation(tmp_path, require_encoder=True)
