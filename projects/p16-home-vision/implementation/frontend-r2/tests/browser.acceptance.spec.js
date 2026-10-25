@@ -24,7 +24,7 @@ const synthetic = {
   },
 }
 
-async function installSyntheticApi(page, { archiveJobs = () => [], videoBytes = Buffer.alloc(0) } = {}) {
+async function installSyntheticApi(page, { archiveJobs = () => [], videoBytes = Buffer.alloc(0), videoContentType = 'video/mp4' } = {}) {
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
     if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/internal/')) return route.continue()
@@ -56,10 +56,10 @@ async function installSyntheticApi(page, { archiveJobs = () => [], videoBytes = 
           if (requested) {
             const start = Number(requested[1])
             const end = Math.min(requested[2] ? Number(requested[2]) : videoBytes.length - 1, videoBytes.length - 1)
-            return route.fulfill({ status: 206, contentType: 'video/mp4', body: videoBytes.subarray(start, end + 1),
+            return route.fulfill({ status: 206, contentType: videoContentType, body: videoBytes.subarray(start, end + 1),
               headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${videoBytes.length}` } })
           }
-          return route.fulfill({ status: 200, contentType: 'video/mp4', body: videoBytes,
+          return route.fulfill({ status: 200, contentType: videoContentType, body: videoBytes,
             headers: { 'Accept-Ranges': 'bytes' } })
         }
         else return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'synthetic route not configured' }) })
@@ -103,10 +103,6 @@ test('@S024 six pages retain backend task truth without document reload', async 
   let jobRequests = 0
   let documentRequests = 0
   let stateIndex = 0
-  // Freeze the UI's five-second background polling so the queued fixture stays
-  // stable until the test explicitly clicks Refresh tasks.
-  await page.clock.install({ time: new Date('2026-10-26T00:00:00Z') })
-  await page.clock.pauseAt(new Date('2026-10-26T00:00:00Z'))
   const queued = {
     archive_job_id: 'synthetic-s024-job', source_recording_id: 'synthetic-recording-1',
     state: 'queued', progress_percent: 68, bytes_received: 680, source_size_bytes: 1000,
@@ -167,8 +163,8 @@ test('@S025 player stays active while task progress and worker error update', as
   const videoPath = testInfo.outputPath('s025-synthetic.mp4')
   const encoded = spawnSync('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i',
-    'color=c=blue:s=64x64:r=10:d=20', '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-    '-movflags', '+faststart', videoPath,
+    'color=c=blue:s=64x64:r=10:d=20', '-an', '-c:v', 'libvpx', '-deadline', 'realtime',
+    '-cpu-used', '8', '-b:v', '100k', '-f', 'webm', videoPath,
   ])
   expect(encoded.status, encoded.stderr.toString()).toBe(0)
   const videoBytes = readFileSync(videoPath)
@@ -182,6 +178,7 @@ test('@S025 player stays active while task progress and worker error update', as
   })
   await installSyntheticApi(page, {
     videoBytes,
+    videoContentType: 'video/webm',
     archiveJobs: () => {
       jobRequests += 1
       return [states[stateIndex]]
