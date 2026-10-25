@@ -1,0 +1,100 @@
+name: P14 ARM64 candidate build (UNSIGNED)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-char tevriqorg/rikkahub Recovery SHA
+        required: true
+        type: string
+        default: 'b0c2c943017f9b9285ccc86146ddaa15a03d6ac3'
+  push:
+    paths:
+      - .github/workflows/p14-arm64-candidate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  android-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || 'b0c2c943017f9b9285ccc86146ddaa15a03d6ac3' }}
+    steps:
+      - name: Validate immutable source SHA
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Checkout public P14 Android recovery source
+        uses: actions/checkout@v4
+        with:
+          repository: tevriqorg/rikkahub
+          ref: ${{ env.SOURCE_SHA }}
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify source identity
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-version: '21'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Set up pnpm 11
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: web-ui/pnpm-lock.yaml
+      - name: Install web UI dependencies
+        working-directory: web-ui
+        run: pnpm install --frozen-lockfile
+      - name: CI-only Google Services configuration
+        run: |
+          cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "1234567890",
+              "project_id": "rikkahub-p14-ci",
+              "storage_bucket": "rikkahub-p14-ci.appspot.com"
+            },
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:1234567890:android:0000000000000000",
+                "android_client_info": {"package_name": "me.rerere.rikkahub.debug"}
+              },
+              "api_key": [{"current_key": "AIzaSyCIOnlyPlaceholderNotARealKey000000"}]
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+      - name: Run P14 JVM checks and build ARM64
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest --tests "me.rerere.rikkahub.data.remote.p14.*" :app:assembleDebug --stacktrace
+      - name: Validate ARM64 candidate and record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p p14-candidate
+          apk=app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+          test -s "$apk"
+          unzip -Z1 "$apk" | grep -m1 '^lib/arm64-v8a/' > p14-candidate/abi-proof.txt
+          buildtools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$buildtools/aapt" dump badging "$apk" | grep '^package: ' > p14-candidate/package-proof.txt
+          grep -q "name='me.rerere.rikkahub.debug'" p14-candidate/package-proof.txt
+          sha256sum "$apk" > p14-candidate/UNSIGNED-SHA256SUMS
+          printf '%s\n' "$SOURCE_SHA" > p14-candidate/SOURCE_SHA
+          printf '%s\n' 'UNSIGNED CI ARTIFACT: NOT FOR FINAL INSTALL. Must be signed on Tokyo with scripts/p14_sign_fixed_candidate.py and certificate dfa33df904e4eb3ca30fdc61a1817dbec36d131a94a594663f7d79522430cc94' > p14-candidate/README.txt
+          cp "$apk" p14-candidate/app-arm64-v8a-UNSIGNED.apk
+      - name: Upload unsigned ARM64 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: p14-arm64-UNSIGNED-${{ env.SOURCE_SHA }}
+          path: p14-candidate/
+          retention-days: 14
+          if-no-files-found: error
