@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import struct
 import subprocess
@@ -36,6 +37,7 @@ class Transcript:
     vad_backend: str
     asr_backend: str
     segments: tuple[TranscriptSegment, ...]
+    asr_pipeline_version: str | None = None
 
 
 class LocalASR(Protocol):
@@ -126,6 +128,20 @@ class JsonCommandASR:
         if not command or not backend_id.strip() or timeout_seconds <= 0:
             raise ValueError("ASR_CONFIGURATION_INVALID")
         self.command, self.backend_id, self.timeout_seconds = command, backend_id, timeout_seconds
+        # Hash the bytes of configured command files without recording their
+        # paths or arguments. This distinguishes in-place wrapper/model updates
+        # while keeping local filesystem details out of transcript evidence.
+        fingerprints = []
+        for position, token in enumerate(command):
+            candidate = Path(token)
+            if candidate.is_file():
+                fingerprints.append({
+                    "position": position,
+                    "name": candidate.name,
+                    "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                })
+        identity = json.dumps(fingerprints, sort_keys=True, separators=(",", ":")).encode()
+        self.pipeline_version = "sha256:" + hashlib.sha256(identity).hexdigest()
 
     def transcribe(self, wav_path: Path, regions: tuple[SpeechRegion, ...]) -> tuple[TranscriptSegment, ...]:
         payload = json.dumps({"wav_path": str(wav_path), "regions": [asdict(r) for r in regions]})
@@ -164,7 +180,11 @@ def build_transcript(asset_id: str, wav_path: Path, asr: LocalASR, *, language: 
             for region in regions
         ):
             raise ValueError("ASR_SEGMENT_OUTSIDE_VAD")
-    return Transcript(TRANSCRIPT_SCHEMA, asset_id, language, "p16.energy_vad.v1", str(getattr(asr, "backend_id", type(asr).__name__)), segments)
+    return Transcript(
+        TRANSCRIPT_SCHEMA, asset_id, language, "p16.energy_vad.v1",
+        str(getattr(asr, "backend_id", type(asr).__name__)), segments,
+        getattr(asr, "pipeline_version", None),
+    )
 
 
 def write_transcript(path: Path, transcript: Transcript) -> None:

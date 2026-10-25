@@ -44,6 +44,7 @@ def main() -> int:
             "state": "done", "attempts": attempts + 1,
             "path": str(transcript_path), "schema": transcript.schema,
             "segments": len(transcript.segments),
+            "asr_pipeline_version": transcript.asr_pipeline_version,
         }
         status["stages"]["transcript"] = "done"
     except Exception as exc:

@@ -81,6 +81,9 @@ def registry():
             'tests/test_transcribe_cli.py::test_transcription_retry_records_retryable_failure_without_failing_media',
             'tests/test_transcribe_cli.py::test_invalid_asr_json_is_retryable_without_changing_derived_audio'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S021': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_transcribe_cli.py::test_s021_same_basename_wrapper_revision_is_persisted_as_transcript_provenance'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 
