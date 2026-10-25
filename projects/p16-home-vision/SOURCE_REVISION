@@ -1,4 +1,4 @@
 repository=tevriqorg/P16-Home-Vision
-branch=feature/p16r2-r2-auto-preservation
-commit=8fa1d1f156195bcd4caa0d90f88d96249dbdb55e
+branch=test/p16r2-vela-15d-soak
+commit=5f6389c9d3a1b608e9d16741939431c90a3d67a2
 copied_paths=implementation/

@@ -136,3 +136,54 @@ def test_single_camera_failure_does_not_block_stable_peer(session, monkeypatch):
     jobs = list(session.scalars(select(ArchiveJob)))
     assert len(jobs) == 1
     assert jobs[0].state == "queued"
+
+
+def test_completed_history_is_not_requeried_when_auto_enqueue_is_disabled(session, monkeypatch):
+    """S016 injection: an unarchived ledger row alone must not cause scan storms."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from datetime import datetime, timedelta, timezone
+    from pydantic import SecretStr
+    from app.models import NvrDevice, CameraTrack, ScanRun, SourceRecording
+    from scripts import scan_nvr
+
+    day = datetime.now(timezone.utc).date() - timedelta(days=3)
+    day_start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    nvr = NvrDevice(id="nvr-s016", name="S016 fixture", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="camera-s016", nvr_id=nvr.id, track_id="101", camera_name="Synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    session.add_all([
+        ScanRun(id="scan-s016", nvr_id=nvr.id, track_id=camera.track_id,
+                query_start=day_start, query_end=day_end, state="success", result_count=1),
+        SourceRecording(id="source-s016", nvr_id=nvr.id, track_id=camera.track_id,
+                        source_start=day_start + timedelta(hours=2),
+                        source_end=day_start + timedelta(hours=2, minutes=3),
+                        duration_ms=180_000, source_state="available"),
+    ])
+    session.commit()
+
+    settings = SimpleNamespace(nvr_base_url="http://127.0.0.1", nvr_username="fixture",
+        nvr_password=SecretStr("fixture"), nvr_scan_min_date=None, nvr_tracks=None,
+        nvr_id=nvr.id, archive_auto_enqueue=False, nvr_timezone_verified=True)
+    calls = []
+
+    class Searcher:
+        def search_history(self, _xml):
+            calls.append(True)
+            return []
+
+    monkeypatch.setattr(scan_nvr, "get_settings", lambda: settings)
+    monkeypatch.setattr(scan_nvr, "SessionLocal", lambda: nullcontext(session))
+    monkeypatch.setattr(scan_nvr, "HikvisionIsapiClient", lambda **_kw: nullcontext(Searcher()))
+
+    assert scan_nvr.scan_once(start_day=day, end_day=day, retry_missing_only=True) == 0
+    assert calls == []
+
+    # Positive control: enabling auto-preservation must revisit unsettled history.
+    settings.archive_auto_enqueue = True
+    assert scan_nvr.scan_once(start_day=day, end_day=day, retry_missing_only=True) == 0
+    assert len(calls) == 1

@@ -1,0 +1,26 @@
+[Unit]
+Description=P16 isolated candidate regression supervisor
+After=local-fs.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/p16-vela-uat
+ExecStart=/usr/bin/python3 /home/ubuntu/p16-vela-uat/candidate-loop.py
+Restart=on-failure
+RestartSec=30
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=64
+PrivateNetwork=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/p16-vela-uat
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

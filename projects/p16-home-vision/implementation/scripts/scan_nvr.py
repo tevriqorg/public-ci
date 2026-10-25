@@ -151,7 +151,12 @@ def scan_once(*, start_day: date, end_day: date, retry_missing_only: bool = Fals
                             day_start=query_start,
                             day_end=query_end,
                         )
-                        unsettled = _day_has_unsettled_archive_sources(
+                        # With preservation disabled, an unarchived source is
+                        # expected and must not keep a completed historical day
+                        # on the NVR query loop forever. When preservation is
+                        # enabled, keep revisiting it so newly eligible sources
+                        # can be discovered and queued.
+                        unsettled = settings.archive_auto_enqueue and _day_has_unsettled_archive_sources(
                             session,
                             nvr_id=nvr.id,
                             track_id=camera.track_id,
