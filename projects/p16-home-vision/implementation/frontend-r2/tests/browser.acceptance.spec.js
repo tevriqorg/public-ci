@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test'
 
+import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+
 const viewports = [
   { name: '1440', width: 1440, height: 900 },
   { name: '1280', width: 1280, height: 800 },
@@ -21,7 +24,7 @@ const synthetic = {
   },
 }
 
-async function installSyntheticApi(page, { archiveJobs = () => [] } = {}) {
+async function installSyntheticApi(page, { archiveJobs = () => [], videoBytes = Buffer.alloc(0) } = {}) {
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
     if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/internal/')) return route.continue()
@@ -47,7 +50,18 @@ async function installSyntheticApi(page, { archiveJobs = () => [] } = {}) {
       default:
         if (url.pathname === '/internal/archive/batch' && route.request().method() === 'POST') body = { queued_count: 1 }
         else if (url.pathname.startsWith('/internal/archive/jobs/') && route.request().method() === 'POST') body = { ok: true }
-        else if (url.pathname === '/api/r2/assets/synthetic-asset-1/web') return route.fulfill({ status: 206, contentType: 'video/mp4', body: '' })
+        else if (url.pathname === '/api/r2/assets/synthetic-asset-1/web') {
+          const range = route.request().headers().range
+          const requested = range?.match(/^bytes=(\d+)-(\d*)$/)
+          if (requested) {
+            const start = Number(requested[1])
+            const end = Math.min(requested[2] ? Number(requested[2]) : videoBytes.length - 1, videoBytes.length - 1)
+            return route.fulfill({ status: 206, contentType: 'video/mp4', body: videoBytes.subarray(start, end + 1),
+              headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${videoBytes.length}` } })
+          }
+          return route.fulfill({ status: 200, contentType: 'video/mp4', body: videoBytes,
+            headers: { 'Accept-Ranges': 'bytes' } })
+        }
         else return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'synthetic route not configured' }) })
     }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
@@ -129,8 +143,12 @@ test('@S024 six pages retain backend task truth without document reload', async 
     await expect(task).toContainText('68%')
     const requestsBeforeRefresh = jobRequests
     stateIndex = 1
+    const refreshResponse = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/v1/archive-jobs')
     await page.getByRole('button', { name: '刷新任务' }).click()
-    await expect.poll(() => jobRequests).toBeGreaterThan(requestsBeforeRefresh)
+    const response = await refreshResponse
+    expect((await response.json()).items[0].state).toBe('downloading')
+    expect(jobRequests).toBeGreaterThan(requestsBeforeRefresh)
     await expect(task).toContainText('拉取中')
     await expect(task).toContainText('69%')
     expect(jobRequests).toBeGreaterThanOrEqual(2)
@@ -142,10 +160,18 @@ test('@S024 six pages retain backend task truth without document reload', async 
   }
 })
 
-test('@S025 player stays active while task progress and worker error update', async ({ page }) => {
+test('@S025 player stays active while task progress and worker error update', async ({ page }, testInfo) => {
   let jobRequests = 0
   let documentRequests = 0
   let stateIndex = 0
+  const videoPath = testInfo.outputPath('s025-synthetic.mp4')
+  const encoded = spawnSync('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i',
+    'color=c=blue:s=64x64:r=10:d=20', '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart', videoPath,
+  ])
+  expect(encoded.status, encoded.stderr.toString()).toBe(0)
+  const videoBytes = readFileSync(videoPath)
   const states = [
     { archive_job_id: 'synthetic-s025-job', source_recording_id: 'synthetic-recording-1', state: 'downloading', progress_percent: 68, bytes_received: 680, source_size_bytes: 1000 },
     { archive_job_id: 'synthetic-s025-job', source_recording_id: 'synthetic-recording-1', state: 'downloading', progress_percent: 69, bytes_received: 690, source_size_bytes: 1000 },
@@ -155,6 +181,7 @@ test('@S025 player stays active while task progress and worker error update', as
     if (request.resourceType() === 'document') documentRequests += 1
   })
   await installSyntheticApi(page, {
+    videoBytes,
     archiveJobs: () => {
       jobRequests += 1
       return [states[stateIndex]]
@@ -171,18 +198,12 @@ test('@S025 player stays active while task progress and worker error update', as
   const video = player.locator('video')
   await expect(video).toBeVisible()
   await expect(video).toHaveAttribute('src', '/api/r2/assets/synthetic-asset-1/web')
-  const started = await video.evaluate(async (element) => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 2
-    canvas.height = 2
-    element.pause()
-    element.removeAttribute('src')
-    element.load()
-    element.srcObject = canvas.captureStream(5)
+  await video.evaluate(async (element) => {
+    element.muted = true
     await element.play()
-    return !element.paused
   })
-  expect(started).toBe(true)
+  await expect.poll(() => video.evaluate((element) => !element.paused && element.currentTime > 0)).toBe(true)
+  const initialPlaybackTime = await video.evaluate((element) => element.currentTime)
 
   await nav.locator('button').filter({ hasText: '任务' }).click()
   await expect(page.getByRole('heading', { name: '任务', exact: true })).toBeVisible()
@@ -194,15 +215,18 @@ test('@S025 player stays active while task progress and worker error update', as
   await page.getByRole('button', { name: '刷新任务' }).click()
   await expect.poll(() => jobRequests).toBeGreaterThan(beforeProgressRefresh)
   await expect(task).toContainText('69%')
-  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused)).toBe(true)
+  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused
+    && element.currentTime > initialPlaybackTime)).toBe(true)
 
+  const playbackAfterProgress = await video.evaluate((element) => element.currentTime)
   const beforeFailureRefresh = jobRequests
   stateIndex = 2
   await page.getByRole('button', { name: '刷新任务' }).click()
   await expect.poll(() => jobRequests).toBeGreaterThan(beforeFailureRefresh)
   await expect(task).toContainText('SYNTHETIC_WORKER_FAILURE')
   await expect(task).toContainText('69%')
-  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused)).toBe(true)
+  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused
+    && element.currentTime > playbackAfterProgress)).toBe(true)
   expect(jobRequests).toBeGreaterThanOrEqual(3)
   expect(documentRequests).toBe(1)
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime)
