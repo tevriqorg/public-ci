@@ -1,0 +1,46 @@
+name: P14 Server Recovery isolated tests (public CI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-char tevriqorg/P14-Entry Recovery SHA
+        required: true
+        type: string
+        default: 'f4b0d5079d51a2915e38d067ba7115bd86381a00'
+  push:
+    paths:
+      - .github/workflows/p14-server-recovery-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  p14-isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || 'f4b0d5079d51a2915e38d067ba7115bd86381a00' }}
+    steps:
+      - name: Verify immutable Recovery Server commit
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Checkout public P14 Server source
+        uses: actions/checkout@v4
+        with:
+          repository: tevriqorg/P14-Entry
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Confirm exact source commit
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - name: Install isolated Server test requirements
+        run: python -m pip install -e './server[test]'
+      - name: Targeted Todo/Idea View regression
+        run: python -m pytest -q server/tests/test_entry_views.py server/tests/test_work_surfaces.py
+      - name: All Server regression tests (synthetic data only)
+        run: python -m pytest -q server/tests
