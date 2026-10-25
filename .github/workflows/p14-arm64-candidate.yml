@@ -73,6 +73,8 @@ jobs:
             "configuration_version": "1"
           }
           JSON
+      - name: Bind Android version suffix to source SHA, not runner SHA
+        run: echo "P14_BUILD_SUFFIX=p14-${SOURCE_SHA:0:8}" >> "$GITHUB_ENV"
       - name: Run P14 JVM checks and build ARM64
         run: |
           chmod +x gradlew
