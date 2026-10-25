@@ -1,4 +1,5 @@
 import json
+import hashlib
 import struct
 import sys
 import wave
@@ -44,6 +45,8 @@ def test_transcription_retry_does_not_rederive_media_and_recovers(tmp_path, monk
 
 def test_transcription_retry_records_retryable_failure_without_failing_media(tmp_path, monkeypatch):
     asset = _prepared_asset(tmp_path)
+    audio = asset / "audio" / "speech.wav"
+    media_hash_before = hashlib.sha256(audio.read_bytes()).hexdigest()
     monkeypatch.setattr(sys, "argv", [
         "p16-media-transcribe", "--asset-root", str(tmp_path), "--asset-id", "asset-1",
         "--local-asr-command", str(tmp_path / "missing-asr"),
@@ -56,3 +59,25 @@ def test_transcription_retry_records_retryable_failure_without_failing_media(tmp
     assert status["stages"]["transcript"] == "failed"
     assert status["transcript"]["retryable"] is True
     assert status["transcript"]["attempts"] == 2
+    assert status["state"] == "derived"
+    assert hashlib.sha256(audio.read_bytes()).hexdigest() == media_hash_before
+
+
+def test_invalid_asr_json_is_retryable_without_changing_derived_audio(tmp_path, monkeypatch):
+    asset = _prepared_asset(tmp_path)
+    audio = asset / "audio" / "speech.wav"
+    media_hash_before = hashlib.sha256(audio.read_bytes()).hexdigest()
+    command = tmp_path / "invalid-asr.py"
+    command.write_text("print('not-json')\n")
+    monkeypatch.setattr(sys, "argv", [
+        "p16-media-transcribe", "--asset-root", str(tmp_path), "--asset-id", "asset-1",
+        "--local-asr-command", sys.executable, str(command),
+    ])
+
+    assert main() == 1
+    status = json.loads((asset / "status.json").read_text())
+    assert status["state"] == "derived"
+    assert status["stages"] == {"web": "done", "frames": "done", "audio": "done", "transcript": "failed"}
+    assert status["transcript"]["retryable"] is True
+    assert status["transcript"]["attempts"] == 2
+    assert hashlib.sha256(audio.read_bytes()).hexdigest() == media_hash_before

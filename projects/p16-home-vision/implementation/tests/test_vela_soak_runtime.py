@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "implementation/scripts"))
-from vela_soak_runtime import EvidenceStore, continuous, run_cycle, cycle_lock, command_handler
+from vela_soak_runtime import EvidenceStore, continuous, run_cycle, run_scenario, cycle_lock, command_handler
 CATALOG = json.loads((ROOT / "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json").read_text())
 
 
@@ -76,6 +76,16 @@ class RuntimeTests(unittest.TestCase):
             self.assertFalse(result["complete"])
             self.assertFalse(result["day_credit"])
             self.assertTrue(all(r["status"]=="BLOCKED" for r in result["results"]))
+
+    def test_exact_scenario_replay_validates_full_catalog_and_persists_one_result(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = EvidenceStore(d)
+            result = run_scenario(CATALOG, "S020", {"S020": lambda _: {"status": "PASS"}},
+                                  store, source_sha="a"*40, guard=lambda: None)
+            self.assertEqual([row["scenario_id"] for row in result["results"]], ["S020"])
+            self.assertTrue(result["complete"])
+            self.assertFalse(result["day_credit"])
+            self.assertEqual([row["scenario_id"] for row in store.records()], ["S020"])
 
     def test_real_exception_is_retained_as_fail(self):
         def broken(_): raise RuntimeError("do not log secret-bearing exception text")

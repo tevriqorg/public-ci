@@ -6,7 +6,7 @@ import re
 import sqlite3
 import sys
 from pathlib import Path
-from vela_soak_runtime import EvidenceStore, command_handler, continuous, digest, run_cycle
+from vela_soak_runtime import EvidenceStore, command_handler, continuous, digest, run_cycle, run_scenario
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -66,6 +66,10 @@ def registry():
         'S016': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_scan_nvr.py::test_completed_history_is_not_requeried_when_auto_enqueue_is_disabled'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S020': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_transcribe_cli.py::test_transcription_retry_records_retryable_failure_without_failing_media',
+            'tests/test_transcribe_cli.py::test_invalid_asr_json_is_retryable_without_changing_derived_audio'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 
@@ -120,15 +124,11 @@ def main(argv=None):
         if shutil.disk_usage(a.state).free < 6*1024**3:
             raise OSError('HOST_FREE_BELOW_LIMIT')
     def cycle():
-        # `scenario` is an exact replay operation. Passing the whole catalog
-        # would manufacture 35 unrelated BLOCKED records around one real run.
-        cycle_catalog = catalog
         if a.mode == 'scenario':
-            cycle_catalog = {
-                **catalog,
-                'scenarios': [s for s in catalog['scenarios'] if s['id'] == a.scenario_id],
-            }
-        result=run_cycle(cycle_catalog,handlers,store,source_sha=a.source_sha,guard=guard)
+            result=run_scenario(catalog,a.scenario_id,handlers,store,
+                                source_sha=a.source_sha,guard=guard)
+        else:
+            result=run_cycle(catalog,handlers,store,source_sha=a.source_sha,guard=guard)
         enqueue_failures(a.state,result['results'])
         print(json.dumps(result),flush=True)
         return result

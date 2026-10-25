@@ -95,14 +95,15 @@ class RepairQueueTests(unittest.TestCase):
     def test_scenario_mode_passes_only_the_selected_case_to_cycle_runner(self):
         with tempfile.TemporaryDirectory() as d:
             seen=[]
-            def fake_cycle(catalog, handlers, store, *, source_sha, guard):
-                seen.extend(s['id'] for s in catalog['scenarios'])
+            def fake_scenario(catalog, scenario_id, handlers, store, *, source_sha, guard):
+                seen.append(scenario_id)
+                self.assertGreaterEqual(len(catalog['scenarios']), 36)
                 self.assertEqual(set(handlers), {'S014'})
                 return {'results':[{'run_id':'replay-S014','scenario_id':'S014',
                                     'seed':'p16-g0-v1-S014','source_sha':source_sha,
                                     'status':'PASS'}], 'complete':True}
             with patch('p16_soak.registry', return_value={'S014':object()}), \
-                 patch('p16_soak.run_cycle', side_effect=fake_cycle):
+                 patch('p16_soak.run_scenario', side_effect=fake_scenario):
                 self.assertEqual(main(['scenario','--scenario-id','S014','--state',d,
                                        '--source-sha','a'*40]), 0)
             self.assertEqual(seen, ['S014'])

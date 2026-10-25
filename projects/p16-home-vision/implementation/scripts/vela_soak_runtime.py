@@ -112,11 +112,27 @@ def run_cycle(catalog, handlers, store, *, source_sha, guard, clock=None):
         return _run_cycle(catalog, handlers, store, source_sha=source_sha, guard=guard, clock=clock)
 
 
-def _run_cycle(catalog, handlers, store, *, source_sha, guard, clock=None):
-    """Execute registered scenarios; unknown handlers are BLOCKED, never skipped."""
+def run_scenario(catalog, scenario_id, handlers, store, *, source_sha, guard, clock=None):
+    """Validate the frozen catalog, then execute exactly one selected scenario."""
     from vela_g0_validate import inspect
     if inspect(catalog):
         raise ValueError("INVALID_CATALOG")
+    selected = [s for s in catalog["scenarios"] if s.get("id") == scenario_id]
+    if len(selected) != 1:
+        raise ValueError("UNKNOWN_SCENARIO")
+    with cycle_lock(store.root):
+        subset = {**catalog, "scenarios": selected}
+        return _run_cycle(subset, handlers, store, source_sha=source_sha,
+                          guard=guard, clock=clock, catalog_validated=True)
+
+
+def _run_cycle(catalog, handlers, store, *, source_sha, guard, clock=None,
+               catalog_validated=False):
+    """Execute registered scenarios; unknown handlers are BLOCKED, never skipped."""
+    if not catalog_validated:
+        from vela_g0_validate import inspect
+        if inspect(catalog):
+            raise ValueError("INVALID_CATALOG")
     now = clock or (lambda: datetime.now(timezone.utc))
     cycle_id = uuid.uuid4().hex
     outcomes = []
