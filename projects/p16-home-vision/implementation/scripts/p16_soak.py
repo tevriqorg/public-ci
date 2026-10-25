@@ -87,6 +87,9 @@ def registry():
         'S022': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_frame_reduce_benchmark.py::test_s022_variable_pts_static_and_motion_manifest_has_grounded_selection'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S023': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_analysis_package.py::test_s023_published_artifact_snapshot_survives_transcript_retry'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 

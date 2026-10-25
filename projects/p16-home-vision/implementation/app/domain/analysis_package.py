@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -58,17 +59,91 @@ def build_analysis_package(
     }
 
 
-def publish_immutable_package(package_dir: Path, package: dict[str, Any]) -> Path:
-    """Publish a canonical package atomically; existing content is immutable."""
+def _atomic_snapshot(
+    package_dir: Path, package_revision: str, package: dict[str, Any], artifact_root: Path
+) -> None:
+    snapshot_root = package_dir / "artifact-snapshots" / package_revision
+    snapshot_root.parent.mkdir(parents=True, exist_ok=True)
+    artifacts = package.get("artifacts", [])
+
+    def verified(path: Path, item: dict[str, Any]) -> bool:
+        return (path.is_file() and path.stat().st_size == item["size_bytes"]
+                and _sha256(path) == item["sha256"])
+
+    if snapshot_root.is_symlink():
+        raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
+    if snapshot_root.exists():
+        if all(verified(snapshot_root / item["path"], item) for item in artifacts):
+            return
+        raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
+
+    staging = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=snapshot_root.parent))
+    try:
+        for item in artifacts:
+            rel = item.get("path")
+            if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts:
+                raise AnalysisPackageError("PACKAGE_ARTIFACT_PATH_UNSAFE")
+            try:
+                source = (artifact_root / rel).resolve(strict=True)
+            except OSError as exc:
+                raise AnalysisPackageError("PACKAGE_ARTIFACT_MISSING") from exc
+            if not source.is_relative_to(artifact_root) or not source.is_file():
+                raise AnalysisPackageError("PACKAGE_ARTIFACT_MISSING")
+            if not verified(source, item):
+                raise AnalysisPackageError("PACKAGE_ARTIFACT_CHANGED")
+            destination = staging / rel
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with source.open("rb") as incoming, destination.open("xb") as outgoing:
+                shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
+                outgoing.flush()
+                os.fsync(outgoing.fileno())
+            if not verified(destination, item):
+                raise AnalysisPackageError("PACKAGE_SNAPSHOT_VERIFY_FAILED")
+        for directory, child_dirs, files in os.walk(staging, topdown=False):
+            for filename in files:
+                os.chmod(Path(directory) / filename, 0o444)
+            os.chmod(directory, 0o555)
+        try:
+            os.rename(staging, snapshot_root)
+        except FileExistsError:
+            if not all(verified(snapshot_root / item["path"], item) for item in artifacts):
+                raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
+        directory = os.open(snapshot_root.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def publish_immutable_package(
+    package_dir: Path, package: dict[str, Any], *, artifact_root: Path | None = None
+) -> Path:
+    """Publish a manifest with package-local, content-verified artifact snapshots."""
     if package.get("schema") != PACKAGE_SCHEMA:
         raise AnalysisPackageError("PACKAGE_SCHEMA_UNSUPPORTED")
     package_dir.mkdir(parents=True, exist_ok=True)
     target = package_dir / "analysis-package.json"
-    body = (json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    original = json.dumps(package, sort_keys=True, separators=(",", ":")).encode()
+    package_revision = hashlib.sha256(original).hexdigest()
+    published = json.loads(original)
+    for item in published.get("artifacts", []):
+        rel = item.get("path")
+        if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts:
+            raise AnalysisPackageError("PACKAGE_ARTIFACT_PATH_UNSAFE")
+        item["path"] = (Path("artifact-snapshots") / package_revision / Path(rel)).as_posix()
+    body = (json.dumps(published, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if target.exists():
         if target.read_bytes() == body:
             return target
         raise AnalysisPackageError("PACKAGE_IMMUTABLE_CONFLICT")
+    if package.get("artifacts"):
+        if artifact_root is None:
+            raise AnalysisPackageError("PACKAGE_ARTIFACT_ROOT_REQUIRED")
+        root = artifact_root.resolve(strict=True)
+        _atomic_snapshot(package_dir, package_revision, package, root)
     with tempfile.NamedTemporaryFile(dir=package_dir, prefix=".package-", delete=False) as temp:
         temp.write(body)
         temp.flush()
