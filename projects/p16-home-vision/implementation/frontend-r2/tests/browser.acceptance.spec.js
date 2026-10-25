@@ -88,6 +88,10 @@ for (const viewport of viewports) {
 test('@S024 six pages retain backend task truth without document reload', async ({ page }, testInfo) => {
   let jobRequests = 0
   let documentRequests = 0
+  // Freeze the UI's five-second background polling so the queued fixture stays
+  // stable until the test explicitly clicks Refresh tasks.
+  await page.clock.install({ time: new Date('2026-10-26T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-10-26T00:00:00Z'))
   const queued = {
     archive_job_id: 'synthetic-s024-job', source_recording_id: 'synthetic-recording-1',
     state: 'queued', progress_percent: 68, bytes_received: 680, source_size_bytes: 1000,
@@ -112,8 +116,11 @@ test('@S024 six pages retain backend task truth without document reload', async 
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime)
     }
 
+    await nav.locator('button').filter({ hasText: '任务' }).click()
+    await expect(page.getByRole('heading', { name: '任务', exact: true })).toBeVisible()
     await expect.poll(() => jobRequests).toBeGreaterThanOrEqual(1)
     const task = page.locator('.task-row').filter({ hasText: 'synthetic-s024-job' })
+    await expect(task).toBeVisible()
     await expect(task).toContainText('等待中')
     await expect(task).toContainText('68%')
     await page.getByRole('button', { name: '刷新任务' }).click()
