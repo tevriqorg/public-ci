@@ -21,7 +21,7 @@ const synthetic = {
   },
 }
 
-async function installSyntheticApi(page) {
+async function installSyntheticApi(page, { archiveJobs = () => [] } = {}) {
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
     if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/internal/')) return route.continue()
@@ -31,7 +31,7 @@ async function installSyntheticApi(page) {
       case '/api/v1/assets': body = paged([synthetic.asset]); break
       case '/api/v1/recordings': body = paged([synthetic.recording]); break
       case '/api/v1/scan-runs': body = paged([]); break
-      case '/api/v1/archive-jobs': body = paged([]); break
+      case '/api/v1/archive-jobs': body = paged(archiveJobs()); break
       case '/api/v1/cameras': body = paged([{ track_id: 'cam-1', name: '客厅' }]); break
       case '/api/v1/storage-volumes': body = paged([
         { storage_volume_id: 'A', online: true, writable: true, total_bytes: 1000000000000, free_bytes: 600000000000 },
@@ -84,3 +84,46 @@ for (const viewport of viewports) {
     expect(overflow).toBeLessThanOrEqual(2)
   })
 }
+
+test('@S024 six pages retain backend task truth without document reload', async ({ page }, testInfo) => {
+  let jobRequests = 0
+  let documentRequests = 0
+  const queued = {
+    archive_job_id: 'synthetic-s024-job', source_recording_id: 'synthetic-recording-1',
+    state: 'queued', progress_percent: 68, bytes_received: 680, source_size_bytes: 1000,
+  }
+  const downloading = { ...queued, state: 'downloading', progress_percent: 69, bytes_received: 690 }
+  await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
+  try {
+    page.on('request', (request) => {
+      if (request.resourceType() === 'document') documentRequests += 1
+    })
+    await installSyntheticApi(page, {
+      archiveJobs: () => (++jobRequests === 1 ? [queued] : [downloading]),
+    })
+    await page.goto('/')
+    const documentTime = await page.evaluate(() => performance.timeOrigin)
+    const nav = page.getByRole('navigation', { name: '主导航' })
+    const labels = ['总览', '归档', '分析', '任务', '待复核', '记录']
+
+    for (const label of labels) {
+      await nav.locator('button').filter({ hasText: label }).click()
+      await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible()
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime)
+    }
+
+    await expect.poll(() => jobRequests).toBeGreaterThanOrEqual(1)
+    const task = page.locator('.task-row').filter({ hasText: 'synthetic-s024-job' })
+    await expect(task).toContainText('等待中')
+    await expect(task).toContainText('68%')
+    await page.getByRole('button', { name: '刷新任务' }).click()
+    await expect(task).toContainText('拉取中')
+    await expect(task).toContainText('69%')
+    expect(jobRequests).toBeGreaterThanOrEqual(2)
+    expect(documentRequests).toBe(1)
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime)
+    await page.screenshot({ path: testInfo.outputPath('s024-six-pages-task-update.png'), fullPage: true })
+  } finally {
+    await page.context().tracing.stop({ path: testInfo.outputPath('s024-browser-trace.zip') })
+  }
+})
