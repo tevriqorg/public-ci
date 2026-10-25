@@ -90,6 +90,9 @@ def registry():
         'S023': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_analysis_package.py::test_s023_published_artifact_snapshot_survives_transcript_retry'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S026': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_vela_repair_queue.py::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 

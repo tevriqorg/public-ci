@@ -2,6 +2,12 @@ import sys
 import tempfile
 import sqlite3
 import unittest
+import contextlib
+import io
+import ipaddress
+import json
+import os
+import socket
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
@@ -107,3 +113,87 @@ class RepairQueueTests(unittest.TestCase):
                 self.assertEqual(main(['scenario','--scenario-id','S014','--state',d,
                                        '--source-sha','a'*40]), 0)
             self.assertEqual(seen, ['S014'])
+
+    def test_s026_hostile_endpoint_and_bind_injection_stays_isolated(self):
+        """Remote env values and insecure bind requests cannot escape the local runner."""
+        attempts=[]
+        violations=[]
+        base_socket=socket.socket
+
+        def check_loopback(operation, address):
+            host=address[0] if isinstance(address,tuple) and address else address
+            try:
+                allowed=ipaddress.ip_address(host).is_loopback
+            except (ValueError, TypeError):
+                allowed=host == 'localhost'
+            attempts.append((operation, str(host)))
+            if not allowed:
+                violations.append((operation, str(host)))
+                raise AssertionError('NON_LOOPBACK_SOCKET_FORBIDDEN')
+
+        class AuditedSocket(base_socket):
+            def bind(self, address):
+                check_loopback('bind', address)
+                return super().bind(address)
+
+            def connect(self, address):
+                check_loopback('connect', address)
+                return super().connect(address)
+
+            def connect_ex(self, address):
+                check_loopback('connect_ex', address)
+                return super().connect_ex(address)
+
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            rejected_state=root/'rejected-state'
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    main(['scenario','--scenario-id','S026','--state',str(rejected_state),
+                          '--source-sha','a'*40,'--bind-host','0.0.0.0'])
+            self.assertEqual(raised.exception.code,2)
+            self.assertFalse(rejected_state.exists())
+
+            # Mutation canary: prove the independent socket oracle rejects an
+            # insecure bind before checking that the real CLI makes no such call.
+            with patch('socket.socket',AuditedSocket):
+                canary=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+                try:
+                    with self.assertRaisesRegex(AssertionError,'NON_LOOPBACK_SOCKET_FORBIDDEN'):
+                        canary.bind(('0.0.0.0',0))
+                finally:
+                    canary.close()
+            self.assertEqual(violations,[('bind','0.0.0.0')])
+            attempts.clear()
+            violations.clear()
+
+            state=root/'evidence'
+            env={
+                'P16_NVR_ENDPOINT':'http://198.51.100.23:8000',
+                'P16_SOAK_ENDPOINT':'https://203.0.113.41:443',
+                'P16_HTTP_BIND_HOST':'0.0.0.0',
+                'NVR_URL':'http://192.0.2.17:80',
+                'P16_API_BIND':'::',
+            }
+            handler=lambda _: {'status':'PASS','oracle':'socket_and_state_audit'}
+            output=io.StringIO()
+            with patch.dict(os.environ,env,clear=False), \
+                 patch('socket.socket',AuditedSocket), \
+                 patch('p16_soak.registry',return_value={'S026':handler}), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(main(['scenario','--scenario-id','S026','--state',str(state),
+                                       '--source-sha','a'*40]),0)
+
+            self.assertEqual(violations,[])
+            self.assertEqual(attempts,[])
+            result=json.loads(output.getvalue())
+            self.assertEqual([r['scenario_id'] for r in result['results']],['S026'])
+            self.assertEqual(result['results'][0]['status'],'PASS')
+            self.assertFalse(result['day_credit'])
+            evidence=list((state/'runs').glob('*.json'))
+            self.assertEqual(len(evidence),1)
+            record=json.loads(evidence[0].read_bytes())
+            from vela_soak_runtime import digest
+            self.assertEqual(evidence[0].stem,digest(record))
+            self.assertEqual(record['source_sha'],'a'*40)
+            self.assertEqual(record['status'],'PASS')
