@@ -212,8 +212,8 @@ test('@S025 player stays active while task progress and worker error update', as
   await page.getByRole('button', { name: '刷新任务' }).click()
   await expect.poll(() => jobRequests).toBeGreaterThan(beforeProgressRefresh)
   await expect(task).toContainText('69%')
-  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused
-    && element.currentTime > initialPlaybackTime)).toBe(true)
+  await expect.poll(() => video.evaluate((element, initialTime) => element.isConnected && !element.paused
+    && element.currentTime > initialTime, initialPlaybackTime)).toBe(true)
 
   const playbackAfterProgress = await video.evaluate((element) => element.currentTime)
   const beforeFailureRefresh = jobRequests
@@ -222,8 +222,8 @@ test('@S025 player stays active while task progress and worker error update', as
   await expect.poll(() => jobRequests).toBeGreaterThan(beforeFailureRefresh)
   await expect(task).toContainText('SYNTHETIC_WORKER_FAILURE')
   await expect(task).toContainText('69%')
-  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused
-    && element.currentTime > playbackAfterProgress)).toBe(true)
+  await expect.poll(() => video.evaluate((element, priorTime) => element.isConnected && !element.paused
+    && element.currentTime > priorTime, playbackAfterProgress)).toBe(true)
   expect(jobRequests).toBeGreaterThanOrEqual(3)
   expect(documentRequests).toBe(1)
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime)
