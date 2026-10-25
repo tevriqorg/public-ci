@@ -8,9 +8,6 @@ on:
         required: true
         type: string
         default: 'b0c2c943017f9b9285ccc86146ddaa15a03d6ac3'
-  push:
-    paths:
-      - .github/workflows/p14-arm64-candidate.yml
 
 permissions:
   contents: read
@@ -78,7 +75,7 @@ jobs:
       - name: Run P14 JVM checks and build ARM64
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --tests "me.rerere.rikkahub.data.remote.p14.*" :app:assembleDebug --stacktrace
+          ./gradlew :app:testDebugUnitTest --tests "me.rerere.rikkahub.data.remote.p14.*" --tests "me.rerere.rikkahub.ui.activity.P14InboxPresentationTest" :app:compileDebugAndroidTestKotlin :app:assembleDebug --stacktrace
       - name: Validate ARM64 candidate and record provenance
         run: |
           set -euo pipefail
