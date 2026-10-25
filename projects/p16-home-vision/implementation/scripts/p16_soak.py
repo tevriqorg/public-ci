@@ -93,6 +93,9 @@ def registry():
         'S026': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_repair_queue.py::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S027': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_media_derivation_integration.py::test_s027_synthetic_raw_retention_and_secret_redaction'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
     }
 
 
