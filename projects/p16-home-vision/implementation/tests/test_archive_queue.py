@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
+import sqlite3
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from app.domain.archive_queue import (
     claim_next_archive_job,
@@ -231,3 +234,39 @@ def test_retry_can_be_scoped_to_one_month(session) -> None:
     retry = retry_failed_archive_jobs(session, month_prefix="2026-07")
     assert len(retry.queued) == 1
     assert session.query(ArchiveJob).filter(ArchiveJob.source_recording_id == august.id, ArchiveJob.state == "queued").count() == 0
+
+
+def test_sqlite_writer_lock_rolls_back_enqueue_and_retry_preserves_source(session):
+    nvr = NvrDevice(id="nvr-s018", name="S018", host="fixture")
+    camera = CameraTrack(id="camera-s018", nvr_id=nvr.id, track_id="s018", camera_name="Synthetic")
+    start = datetime.now(timezone.utc) - timedelta(days=3)
+    source = SourceRecording(
+        id="source-s018", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=start, source_end=start + timedelta(seconds=5),
+        duration_ms=5000, source_state="available",
+    )
+    session.add(nvr); session.flush(); session.add(camera); session.flush()
+    session.add(source); session.commit()
+    session.connection().exec_driver_sql("PRAGMA busy_timeout=20")
+    blocker = sqlite3.connect(session.get_bind().url.database, timeout=0.02, isolation_level=None)
+    try:
+        blocker.execute("BEGIN IMMEDIATE")
+        with pytest.raises(OperationalError, match="locked"):
+            enqueue_archive_jobs(session, [source.id], requested_by="S018 fixture")
+        session.rollback()
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    session.expire_all()
+    assert session.get(SourceRecording, source.id) is not None
+    assert session.scalar(select(ArchiveJob.id).where(
+        ArchiveJob.source_recording_id == source.id,
+        ArchiveJob.state == "queued",
+    )) is None
+    outcome = enqueue_archive_jobs(session, [source.id], requested_by="S018 retry")
+    session.commit()
+    jobs = list(session.scalars(select(ArchiveJob).where(ArchiveJob.source_recording_id == source.id)))
+    assert len(outcome.queued) == 1
+    assert len(jobs) == 1 and jobs[0].state == "queued"
+    assert session.get(SourceRecording, source.id).source_state == "available"
