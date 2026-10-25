@@ -92,6 +92,8 @@ def registry():
             cwd=ROOT/'implementation',timeout_seconds=90),
         'S024': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S024'],
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180),
+        'S025': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S025'],
+            cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180),
         'S026': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_repair_queue.py::RepairQueueTests::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
             cwd=ROOT/'implementation',timeout_seconds=90),

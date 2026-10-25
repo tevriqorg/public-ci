@@ -134,3 +134,61 @@ test('@S024 six pages retain backend task truth without document reload', async 
     await page.context().tracing.stop({ path: testInfo.outputPath('s024-browser-trace.zip') })
   }
 })
+
+test('@S025 player stays active while task progress and worker error update', async ({ page }) => {
+  let jobRequests = 0
+  let documentRequests = 0
+  await page.clock.install({ time: new Date('2026-10-26T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-10-26T00:00:00Z'))
+  const states = [
+    { archive_job_id: 'synthetic-s025-job', source_recording_id: 'synthetic-recording-1', state: 'downloading', progress_percent: 68, bytes_received: 680, source_size_bytes: 1000 },
+    { archive_job_id: 'synthetic-s025-job', source_recording_id: 'synthetic-recording-1', state: 'downloading', progress_percent: 69, bytes_received: 690, source_size_bytes: 1000 },
+    { archive_job_id: 'synthetic-s025-job', source_recording_id: 'synthetic-recording-1', state: 'failed', progress_percent: 69, bytes_received: 690, source_size_bytes: 1000, error_code: 'SYNTHETIC_WORKER_FAILURE' },
+  ]
+  page.on('request', (request) => {
+    if (request.resourceType() === 'document') documentRequests += 1
+  })
+  await installSyntheticApi(page, {
+    archiveJobs: () => [states[Math.min(jobRequests++, states.length - 1)]],
+  })
+  await page.goto('/')
+  const documentTime = await page.evaluate(() => performance.timeOrigin)
+  const nav = page.getByRole('navigation', { name: '主导航' })
+  await nav.locator('button').filter({ hasText: '归档' }).click()
+  await expect(page.getByRole('heading', { name: '归档', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '播放', exact: true }).click()
+
+  const player = page.getByRole('complementary', { name: '浮动播放器' })
+  const video = player.locator('video')
+  await expect(video).toBeVisible()
+  await expect(video).toHaveAttribute('src', '/api/r2/assets/synthetic-asset-1/web')
+  const started = await video.evaluate(async (element) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 2
+    canvas.height = 2
+    element.pause()
+    element.removeAttribute('src')
+    element.load()
+    element.srcObject = canvas.captureStream(5)
+    await element.play()
+    return !element.paused
+  })
+  expect(started).toBe(true)
+
+  await nav.locator('button').filter({ hasText: '任务' }).click()
+  await expect(page.getByRole('heading', { name: '任务', exact: true })).toBeVisible()
+  const task = page.locator('.task-row').filter({ hasText: 'synthetic-s025-job' })
+  await expect(task).toBeVisible()
+  await expect(task).toContainText('68%')
+  await page.getByRole('button', { name: '刷新任务' }).click()
+  await expect(task).toContainText('69%')
+  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused)).toBe(true)
+
+  await page.getByRole('button', { name: '刷新任务' }).click()
+  await expect(task).toContainText('SYNTHETIC_WORKER_FAILURE')
+  await expect(task).toContainText('69%')
+  await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused)).toBe(true)
+  expect(jobRequests).toBeGreaterThanOrEqual(3)
+  expect(documentRequests).toBe(1)
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime)
+})
