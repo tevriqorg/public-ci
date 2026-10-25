@@ -1,12 +1,13 @@
 import copy
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "implementation/scripts"))
-from vela_soak_runtime import EvidenceStore, continuous, run_cycle, run_scenario, cycle_lock, command_handler
+from vela_soak_runtime import EvidenceStore, continuous, run_cycle, run_scenario, cycle_lock, command_handler, record_daily_cycle
 CATALOG = json.loads((ROOT / "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json").read_text())
 
 
@@ -18,6 +19,29 @@ def record(**kw):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_s028_outage_catchup_keeps_missed_days_and_rejects_second_writer(self):
+        with tempfile.TemporaryDirectory() as d:
+            first = record_daily_cycle(d, scheduled_start="2026-10-22",
+                                       observed_day="2026-10-25", run_id="after-reboot",
+                                       complete=True,
+                                       observed_at="2026-10-25T00:15:00+08:00")
+            self.assertEqual(first["schedule"], [
+                ("2026-10-22", "MISSING"), ("2026-10-23", "MISSING"),
+                ("2026-10-24", "MISSING"), ("2026-10-25", "PASS")])
+            recovery = record_daily_cycle(d, scheduled_start="2026-10-22",
+                                          observed_day="2026-10-23", run_id="catchup-23",
+                                          complete=True,
+                                          observed_at="2026-10-25T00:20:00+08:00")
+            self.assertEqual(recovery["schedule"], first["schedule"])
+            with sqlite3.connect(Path(d) / "daily-ledger.sqlite3") as db:
+                attempts = db.execute(
+                    "SELECT day, outcome FROM daily_attempts ORDER BY run_id").fetchall()
+            self.assertEqual(attempts, [("2026-10-25", "PASS"), ("2026-10-23", "PASS")])
+            with cycle_lock(d):
+                with self.assertRaises(BlockingIOError):
+                    with cycle_lock(d):
+                        pass
+
     def test_original_fail_survives_linked_recovery_and_duplicate_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             store = EvidenceStore(d)

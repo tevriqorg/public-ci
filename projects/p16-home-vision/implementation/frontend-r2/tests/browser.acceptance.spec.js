@@ -88,6 +88,7 @@ for (const viewport of viewports) {
 test('@S024 six pages retain backend task truth without document reload', async ({ page }, testInfo) => {
   let jobRequests = 0
   let documentRequests = 0
+  let stateIndex = 0
   // Freeze the UI's five-second background polling so the queued fixture stays
   // stable until the test explicitly clicks Refresh tasks.
   await page.clock.install({ time: new Date('2026-10-26T00:00:00Z') })
@@ -103,7 +104,10 @@ test('@S024 six pages retain backend task truth without document reload', async 
       if (request.resourceType() === 'document') documentRequests += 1
     })
     await installSyntheticApi(page, {
-      archiveJobs: () => (++jobRequests === 1 ? [queued] : [downloading]),
+      archiveJobs: () => {
+        jobRequests += 1
+        return [stateIndex === 0 ? queued : downloading]
+      },
     })
     await page.goto('/')
     const documentTime = await page.evaluate(() => performance.timeOrigin)
@@ -123,7 +127,10 @@ test('@S024 six pages retain backend task truth without document reload', async 
     await expect(task).toBeVisible()
     await expect(task).toContainText('等待中')
     await expect(task).toContainText('68%')
+    const requestsBeforeRefresh = jobRequests
+    stateIndex = 1
     await page.getByRole('button', { name: '刷新任务' }).click()
+    await expect.poll(() => jobRequests).toBeGreaterThan(requestsBeforeRefresh)
     await expect(task).toContainText('拉取中')
     await expect(task).toContainText('69%')
     expect(jobRequests).toBeGreaterThanOrEqual(2)
@@ -138,8 +145,7 @@ test('@S024 six pages retain backend task truth without document reload', async 
 test('@S025 player stays active while task progress and worker error update', async ({ page }) => {
   let jobRequests = 0
   let documentRequests = 0
-  await page.clock.install({ time: new Date('2026-10-26T00:00:00Z') })
-  await page.clock.pauseAt(new Date('2026-10-26T00:00:00Z'))
+  let stateIndex = 0
   const states = [
     { archive_job_id: 'synthetic-s025-job', source_recording_id: 'synthetic-recording-1', state: 'downloading', progress_percent: 68, bytes_received: 680, source_size_bytes: 1000 },
     { archive_job_id: 'synthetic-s025-job', source_recording_id: 'synthetic-recording-1', state: 'downloading', progress_percent: 69, bytes_received: 690, source_size_bytes: 1000 },
@@ -149,7 +155,10 @@ test('@S025 player stays active while task progress and worker error update', as
     if (request.resourceType() === 'document') documentRequests += 1
   })
   await installSyntheticApi(page, {
-    archiveJobs: () => [states[Math.min(jobRequests++, states.length - 1)]],
+    archiveJobs: () => {
+      jobRequests += 1
+      return [states[stateIndex]]
+    },
   })
   await page.goto('/')
   const documentTime = await page.evaluate(() => performance.timeOrigin)
@@ -180,11 +189,17 @@ test('@S025 player stays active while task progress and worker error update', as
   const task = page.locator('.task-row').filter({ hasText: 'synthetic-s025-job' })
   await expect(task).toBeVisible()
   await expect(task).toContainText('68%')
+  const beforeProgressRefresh = jobRequests
+  stateIndex = 1
   await page.getByRole('button', { name: '刷新任务' }).click()
+  await expect.poll(() => jobRequests).toBeGreaterThan(beforeProgressRefresh)
   await expect(task).toContainText('69%')
   await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused)).toBe(true)
 
+  const beforeFailureRefresh = jobRequests
+  stateIndex = 2
   await page.getByRole('button', { name: '刷新任务' }).click()
+  await expect.poll(() => jobRequests).toBeGreaterThan(beforeFailureRefresh)
   await expect(task).toContainText('SYNTHETIC_WORKER_FAILURE')
   await expect(task).toContainText('69%')
   await expect.poll(() => video.evaluate((element) => element.isConnected && !element.paused)).toBe(true)

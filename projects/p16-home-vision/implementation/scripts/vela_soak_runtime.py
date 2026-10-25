@@ -10,8 +10,9 @@ import subprocess
 from contextlib import contextmanager
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 def digest(value):
@@ -105,6 +106,51 @@ class EvidenceStore:
         finally:
             temporary.unlink(missing_ok=True)
         return name
+
+
+def record_daily_cycle(root, *, scheduled_start, observed_day, run_id,
+                       complete, observed_at=None):
+    """Persist one daily attempt without erasing missed calendar-day history.
+
+    A later catch-up attempt is retained in daily_attempts, while an originally
+    missed date remains MISSING in daily_schedule and cannot be turned into a
+    credited PASS retroactively.
+    """
+    try:
+        start = date.fromisoformat(scheduled_start)
+        day = date.fromisoformat(observed_day)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("INVALID_SCHEDULE_DATE") from exc
+    if start.isoformat() != scheduled_start or day.isoformat() != observed_day:
+        raise ValueError("INVALID_SCHEDULE_DATE")
+    if day < start or day > datetime.now(ZoneInfo("Asia/Singapore")).date():
+        raise ValueError("SCHEDULE_DAY_OUT_OF_RANGE")
+    if not isinstance(run_id, str) or not run_id or not isinstance(complete, bool):
+        raise ValueError("INVALID_DAILY_ATTEMPT")
+    when = observed_at or datetime.now(timezone.utc).isoformat()
+    path = Path(root)
+    path.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path / "daily-ledger.sqlite3") as db:
+        db.execute("PRAGMA busy_timeout=5000")
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("CREATE TABLE IF NOT EXISTS daily_schedule (day TEXT PRIMARY KEY, state TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS daily_attempts (run_id TEXT PRIMARY KEY, day TEXT NOT NULL, observed_at TEXT NOT NULL, outcome TEXT NOT NULL)")
+        cursor = start
+        while cursor <= day:
+            state = "MISSING" if cursor < day else ("PASS" if complete else "FAIL")
+            db.execute("INSERT OR IGNORE INTO daily_schedule VALUES (?, ?)",
+                       (cursor.isoformat(), state))
+            cursor += timedelta(days=1)
+        outcome = "PASS" if complete else "FAIL"
+        try:
+            db.execute("INSERT INTO daily_attempts VALUES (?, ?, ?, ?)",
+                       (run_id, day.isoformat(), when, outcome))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("DUPLICATE_DAILY_RUN_ID") from exc
+        db.commit()
+    with sqlite3.connect(path / "daily-ledger.sqlite3") as db:
+        states = db.execute("SELECT day, state FROM daily_schedule ORDER BY day").fetchall()
+    return {"schedule": states, "attempt": (run_id, day.isoformat(), outcome)}
 
 
 def run_cycle(catalog, handlers, store, *, source_sha, guard, clock=None):

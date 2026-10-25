@@ -100,6 +100,9 @@ def registry():
         'S027': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s027_synthetic_raw_retention_and_secret_redaction'],
             cwd=ROOT/'implementation',timeout_seconds=180),
+        'S028': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_vela_soak_runtime.py::RuntimeTests::test_s028_outage_catchup_keeps_missed_days_and_rejects_second_writer'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 
