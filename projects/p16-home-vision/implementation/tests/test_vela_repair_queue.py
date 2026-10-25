@@ -11,7 +11,7 @@ import socket
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from p16_soak import enqueue_failures, main
+from p16_soak import enqueue_failures, main, registry
 
 class RepairQueueTests(unittest.TestCase):
     def test_repeated_failures_deduplicate_task_preserve_observations_and_pass_does_not_close(self):
@@ -197,3 +197,9 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(evidence[0].stem,digest(record))
             self.assertEqual(record['source_sha'],'a'*40)
             self.assertEqual(record['status'],'PASS')
+
+    def test_s026_registered_handler_executes_the_injection(self):
+        outcome=registry()['S026']({'id':'S026'})
+        self.assertEqual(outcome['status'],'PASS')
+        self.assertEqual(outcome['exit_code'],0)
+        self.assertFalse(outcome['timed_out'])
