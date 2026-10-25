@@ -87,7 +87,8 @@ def ensure_fresh_session(root: Path, *, guard=verify_live_canary, opener=None,
         if (old.get("type") != "access" or ref.get("type") != "refresh"
                 or not isinstance(old.get("user_id"), str) or not old["user_id"]
                 or ref.get("user_id") != old["user_id"]
-                or not isinstance(old.get("tenant_id"), str) or not old["tenant_id"]):
+                or not ((type(old.get("tenant_id")) is int and old["tenant_id"] > 0)
+                        or (isinstance(old.get("tenant_id"), str) and bool(old["tenant_id"])))):
             raise ValueError("clone session identity/type mismatch")
         expiry = _expiry(old)
         if expiry > now + renew_before:
@@ -120,6 +121,7 @@ def ensure_fresh_session(root: Path, *, guard=verify_live_canary, opener=None,
             if (current.get("type") != "access" or next_ref.get("type") != "refresh"
                     or current.get("user_id") != old["user_id"]
                     or next_ref.get("user_id") != old["user_id"]
+                    or type(current.get("tenant_id")) is not type(old["tenant_id"])
                     or current.get("tenant_id") != old["tenant_id"]
                     or _expiry(current) <= now + 3600
                     or _expiry(next_ref) <= _expiry(current)):

@@ -80,6 +80,11 @@ class SessionRenewContract(unittest.TestCase):
         return ensure_fresh_session(self.root, guard=lambda _: {"clone_db": "aibox126_canary"},
                                     opener=opener, now=self.now if now is None else now)
 
+    def test_live_numeric_tenant_claim_refreshes(self):
+        self.write_session(jwt("access", self.now+120,tenant=10000),self.old_refresh)
+        result=self.invoke(FakeOpener(jwt("access",self.now+86400,tenant=10000),jwt("refresh",self.now+600000)))
+        self.assertTrue(result["rotated"])
+
     def test_refresh_expiring_access_and_preserve_private_atomic_file(self):
         new_access = jwt("access", self.now + 86400)
         new_refresh = jwt("refresh", self.now + 600000)
