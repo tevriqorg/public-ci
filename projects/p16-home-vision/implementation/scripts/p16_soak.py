@@ -254,14 +254,12 @@ def registry():
             'tests/test_vela_mutation_matrix.py::test_s031_incorrect_hash_canary_rejects_digest_mutant',
             'tests/test_vela_mutation_matrix.py::test_s031_duplicate_enqueue_canary_rejects_missing_active_job_guard'],
             cwd=ROOT/'implementation',timeout_seconds=180),
-        'S032': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_reconciliation_storage.py::test_s032_reconciles_fifteen_day_media_evidence_and_source_history'],
-            cwd=ROOT/'implementation',timeout_seconds=120),
         # These scenarios stay unregistered until every frozen subcase has
         # real injection and independent oracles. S022 still needs representative
         # target benchmarking and a Human threshold decision; S028/029/030 still
         # lack their system-level or independent-review oracles. S026's current
         # socket monkeypatch is process-local and cannot establish child egress isolation.
+        # S032's synthetic ledger does not recheck historical media/source drift.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),

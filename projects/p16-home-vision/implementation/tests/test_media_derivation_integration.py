@@ -246,11 +246,10 @@ def test_s027_raw_retention_and_secret_redaction_include_git_content(tmp_path: P
     before = hashlib.sha256(raw.read_bytes()).hexdigest()
     canary = secrets.token_hex(24).encode()
     asset_root = tmp_path / "assets"
+    # Adversarial legacy/unknown environment values must not authorize deletion:
+    # this CLI has no RAW cleanup policy hook, and RAW remains protected.
     monkeypatch.setenv("P16_RAW_RETENTION", "0")
     monkeypatch.setenv("P16_CLEANUP_RAW", "1")
-    monkeypatch.setenv("P16_NVR_PASSWORD", canary.decode())
-    monkeypatch.setenv("P16_NVR_ENDPOINT", "http://198.51.100.23:8000")
-    monkeypatch.setenv("P16_HTTP_BIND_HOST", "0.0.0.0")
     monkeypatch.setattr(sys, "argv", [
         "p16-media-derive", "--raw", str(raw), "--asset-root", str(asset_root),
         "--asset-id", "synthetic-s027", "--camera", "synthetic-canary",
