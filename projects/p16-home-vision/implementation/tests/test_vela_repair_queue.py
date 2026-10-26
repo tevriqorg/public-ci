@@ -203,3 +203,45 @@ class RepairQueueTests(unittest.TestCase):
         self.assertEqual(outcome['status'],'PASS')
         self.assertEqual(outcome['exit_code'],0)
         self.assertFalse(outcome['timed_out'])
+
+    def test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling(self):
+        from types import SimpleNamespace
+        from p16_soak import shutil
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            state=root/'uat-state'
+            state.mkdir()
+            sibling=root/'other-service-sentinel.bin'
+            sibling.write_bytes(b'other-service-state')
+            import hashlib
+            before=hashlib.sha256(sibling.read_bytes()).hexdigest()
+            calls=[]
+            handler=lambda _: (calls.append('ran') or {'status':'PASS'})
+            output=io.StringIO()
+            low_disk=lambda _path: SimpleNamespace(total=10,used=5,free=6*1024**3-1)
+            with patch('p16_soak.registry',return_value={'S029':handler}), \
+                 patch.object(shutil,'disk_usage',side_effect=low_disk), \
+                 contextlib.redirect_stdout(output):
+                code=main(['scenario','--scenario-id','S029','--state',str(state),
+                           '--source-sha','a'*40])
+
+            self.assertEqual(code,1)
+            self.assertEqual(calls,[])
+            result=json.loads(output.getvalue())
+            self.assertFalse(result['complete'])
+            self.assertEqual(result['results'][0]['status'],'BLOCKED')
+            self.assertEqual(result['results'][0]['reason'],'RESOURCE_GUARD:OSError')
+            records=list((state/'runs').glob('*.json'))
+            self.assertEqual(len(records),1)
+            from vela_soak_runtime import digest
+            record=json.loads(records[0].read_bytes())
+            self.assertEqual(records[0].stem,digest(record))
+            self.assertEqual(record['source_sha'],'a'*40)
+            self.assertEqual(record['status'],'BLOCKED')
+            self.assertEqual(hashlib.sha256(sibling.read_bytes()).hexdigest(),before)
+
+    def test_s029_registered_handler_executes_guard_injection(self):
+        outcome=registry()['S029']({'id':'S029'})
+        self.assertEqual(outcome['status'],'PASS')
+        self.assertEqual(outcome['exit_code'],0)
+        self.assertFalse(outcome['timed_out'])

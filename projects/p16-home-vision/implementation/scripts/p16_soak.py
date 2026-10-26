@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import sys
+import shutil
 from pathlib import Path
 from vela_soak_runtime import EvidenceStore, command_handler, continuous, digest, run_cycle, run_scenario
 
@@ -52,6 +53,23 @@ def enqueue_failures(root, records):
                        (key, r['scenario_id'], r['seed'], r['source_sha'], 'NEEDS_REPRO_AND_FIX'))
             db.execute('INSERT OR IGNORE INTO observations VALUES (?,?,?)',
                        (r['run_id'], key, evidence_hash))
+
+
+def resource_guard(state, *, max_bytes=64*1024**2,
+                   min_free_bytes=6*1024**3, disk_usage=None):
+    """Fail closed before a scenario when its evidence or host budget is unsafe."""
+    usage = disk_usage or shutil.disk_usage
+    root = Path(state)
+    size = 0
+    for item in root.rglob('*'):
+        if item.is_symlink():
+            raise OSError('EVIDENCE_SYMLINK_FORBIDDEN')
+        if item.is_file():
+            size += item.stat().st_size
+    if size > max_bytes:
+        raise OSError('EVIDENCE_BUDGET_EXHAUSTED')
+    if usage(root).free < min_free_bytes:
+        raise OSError('HOST_FREE_BELOW_LIMIT')
 
 
 def registry():
@@ -103,6 +121,9 @@ def registry():
         'S028': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_soak_runtime.py::RuntimeTests::test_s028_outage_catchup_keeps_missed_days_and_rejects_second_writer'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S029': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_vela_repair_queue.py::RepairQueueTests::test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 
@@ -145,17 +166,7 @@ def main(argv=None):
     if a.mode=='scenario':
         handlers={k:v for k,v in handlers.items() if k==a.scenario_id}
     def guard():
-        import shutil
-        size=0
-        for item in a.state.rglob('*'):
-            if item.is_symlink():
-                raise OSError('EVIDENCE_SYMLINK_FORBIDDEN')
-            if item.is_file():
-                size += item.stat().st_size
-        if size > 64*1024**2:
-            raise OSError('EVIDENCE_BUDGET_EXHAUSTED')
-        if shutil.disk_usage(a.state).free < 6*1024**3:
-            raise OSError('HOST_FREE_BELOW_LIMIT')
+        resource_guard(a.state)
     def cycle():
         if a.mode == 'scenario':
             result=run_scenario(catalog,a.scenario_id,handlers,store,
