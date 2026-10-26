@@ -25,6 +25,15 @@ def _validate_failure(record):
 
 def enqueue_failures(root, records):
     """Deduplicate same-version reproductions, retain every evidence reference."""
+    root = Path(root).absolute()
+    if any(part.is_symlink() for part in (root, *root.parents)):
+        raise ValueError('REPAIR_STATE_SYMLINK_FORBIDDEN')
+    if root.exists() and not root.is_dir():
+        raise ValueError('REPAIR_STATE_NOT_DIRECTORY')
+    root.mkdir(parents=True, exist_ok=True)
+    queue_path = root / 'repair-queue.sqlite3'
+    if queue_path.is_symlink():
+        raise ValueError('REPAIR_QUEUE_SYMLINK_FORBIDDEN')
     failures = []
     batch_run_ids = {}
     # Validate the complete batch before opening a write transaction. A malformed
@@ -40,7 +49,7 @@ def enqueue_failures(root, records):
             raise ValueError('REPAIR_OBSERVATION_CONFLICT')
         failures.append((key, r, evidence_hash))
 
-    with sqlite3.connect(Path(root) / 'repair-queue.sqlite3') as db:
+    with sqlite3.connect(queue_path) as db:
         db.execute('PRAGMA busy_timeout=5000')
         db.execute('BEGIN IMMEDIATE')
         db.execute('CREATE TABLE IF NOT EXISTS tasks (key TEXT PRIMARY KEY, scenario TEXT, seed TEXT, source TEXT, status TEXT)')

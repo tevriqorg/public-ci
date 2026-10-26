@@ -48,6 +48,28 @@ class RepairQueueTests(unittest.TestCase):
                 enqueue_failures(d,[invalid])
             self.assertFalse((Path(d)/'repair-queue.sqlite3').exists())
 
+    def test_repair_queue_rejects_symlinked_state_and_database_without_touching_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            outside=root/'outside'
+            outside.mkdir()
+            state_link=root/'state-link'
+            state_link.symlink_to(outside, target_is_directory=True)
+            record=dict(run_id='attempt',scenario_id='S014',seed='fixture',
+                        source_sha='a'*40,status='FAIL')
+            with self.assertRaisesRegex(ValueError,'REPAIR_STATE_SYMLINK_FORBIDDEN'):
+                enqueue_failures(state_link,[record])
+            self.assertEqual(list(outside.iterdir()),[])
+
+            state=root/'state'
+            state.mkdir()
+            sentinel=outside/'sentinel.sqlite3'
+            sentinel.write_bytes(b'preserve-exact-bytes')
+            (state/'repair-queue.sqlite3').symlink_to(sentinel)
+            with self.assertRaisesRegex(ValueError,'REPAIR_QUEUE_SYMLINK_FORBIDDEN'):
+                enqueue_failures(state,[record])
+            self.assertEqual(sentinel.read_bytes(),b'preserve-exact-bytes')
+
     def test_mid_batch_conflict_rolls_back_new_tasks_and_observations(self):
         with tempfile.TemporaryDirectory() as d:
             existing=dict(run_id='existing',scenario_id='S014',seed='fixture',
