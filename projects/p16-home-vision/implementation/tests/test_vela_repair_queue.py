@@ -171,6 +171,16 @@ class RepairQueueTests(unittest.TestCase):
                 enqueue_failures(d,[first,second])
             self.assertFalse((Path(d)/'repair-queue.sqlite3').exists())
 
+    def test_pass_fail_reuse_of_run_id_is_rejected_in_either_order(self):
+        failed=dict(run_id='same-run',scenario_id='S014',seed='fixture',
+                    source_sha='a'*40,status='FAIL')
+        passed=dict(failed,status='PASS')
+        for batch in ([failed,passed],[passed,failed]):
+            with self.subTest(first_status=batch[0]['status']), tempfile.TemporaryDirectory() as d:
+                with self.assertRaisesRegex(ValueError,'REPAIR_OBSERVATION_CONFLICT'):
+                    enqueue_failures(d,batch)
+                self.assertFalse((Path(d)/'repair-queue.sqlite3').exists())
+
     def test_cli_rejects_scenario_filter_for_continuous_mode(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(SystemExit) as raised:
