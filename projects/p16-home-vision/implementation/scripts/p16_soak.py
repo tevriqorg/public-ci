@@ -63,7 +63,7 @@ def verify_source_revision(root, source_sha):
         implementation = prefix.rstrip("/") + "/"
         # The canonical source checkout stores design beside implementation;
         # the public mirror stores the same catalog beside its implementation.
-        project_prefix = prefix.rstrip("/").rsplit("/", 1)[0]
+        project_prefix = prefix.rstrip("/").rpartition("/")[0]
         if project_prefix:
             project_prefix += "/"
         catalog_paths = {project_prefix + "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json"}

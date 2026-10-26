@@ -8,6 +8,7 @@ import ipaddress
 import json
 import os
 import socket
+import shutil
 import subprocess
 from unittest.mock import patch
 from pathlib import Path
@@ -35,6 +36,27 @@ class RepairQueueTests(unittest.TestCase):
             code.write_text('print("mutated")\n')
             with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
                 verify_source_revision(root,sha)
+
+            # Canonical repository invocation has implementation/ directly
+            # below the Git root, so its scenario catalog is at design/.
+            canonical=Path(tempfile.mkdtemp(prefix='p16-canonical-',dir=os.environ.get('TMPDIR')))
+            canonical_code=canonical/'implementation'/'scripts'/'runner.py'
+            canonical_code.parent.mkdir(parents=True)
+            canonical_code.write_text('print("canonical fixture")\n')
+            canonical_catalog=canonical/'design'/'P16R2_VELA_SOAK_G0_SCENARIOS_v1.json'
+            canonical_catalog.parent.mkdir(parents=True)
+            canonical_catalog.write_text('{"scenarios":[]}\n')
+            (canonical/'SOURCE_REVISION').write_text('c'*40+'\n')
+            subprocess.run(['git','init','-q'],cwd=canonical,check=True)
+            subprocess.run(['git','config','user.name','P16 fixture'],cwd=canonical,check=True)
+            subprocess.run(['git','config','user.email','p16-fixture@example.invalid'],cwd=canonical,check=True)
+            subprocess.run(['git','add','implementation','design','SOURCE_REVISION'],cwd=canonical,check=True)
+            subprocess.run(['git','commit','-qm','canonical fixture'],cwd=canonical,check=True)
+            self.assertEqual(verify_source_revision(canonical/'implementation','c'*40),'c'*40)
+            canonical_catalog.write_text('{"scenarios":[{"id":"S024"}]}\n')
+            with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                verify_source_revision(canonical/'implementation','c'*40)
+            shutil.rmtree(canonical)
             code.write_text('print("fixture")\n')
             extra=root/'implementation'/'tests'/'untracked.py'
             extra.parent.mkdir(parents=True)
