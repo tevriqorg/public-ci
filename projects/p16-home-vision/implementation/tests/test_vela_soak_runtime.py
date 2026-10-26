@@ -90,7 +90,10 @@ class RuntimeTests(unittest.TestCase):
             root = Path(d)
             store = EvidenceStore(root / "learning-evidence")
             original = record(run_id="s030-original-failure", scenario_id="S030",
-                              seed="p16-g0-v1-S030", result={"bug": "late catch-up finalized current day"})
+                              seed="p16-g0-v1-S030",
+                              source_sha="2b9b23ec882bb57477f5214abc0444fb8f8bb9ca",
+                              result={"bug": "late catch-up finalized current day",
+                                      "review_comment": "4373031367"})
             failure_hash = store.append(original)
             failure_bytes = (store.runs / f"{failure_hash}.json").read_bytes()
 
@@ -130,8 +133,10 @@ class RuntimeTests(unittest.TestCase):
 
             recovery = record(run_id="s030-fixed-recovery", scenario_id="S030",
                               seed="p16-g0-v1-S030", status="PASS",
+                              source_sha="6dbf46207f4ebe9f635cabd45f44fbc07485570b",
                               recovery_of=original["run_id"],
-                              result={"targeted": "PASS", "adjacent": "PASS"})
+                              result={"targeted": "PASS", "adjacent": "PASS",
+                                      "fix_source": "6dbf46207f4ebe9f635cabd45f44fbc07485570b"})
             store.append(recovery)
             self.assertEqual((store.runs / f"{failure_hash}.json").read_bytes(), failure_bytes)
             records = {item["run_id"]: item for item in store.records()}
