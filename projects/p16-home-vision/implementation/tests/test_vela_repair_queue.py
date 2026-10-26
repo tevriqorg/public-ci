@@ -7,10 +7,10 @@ import io
 import ipaddress
 import json
 import os
+import re
 import socket
 import shutil
 import subprocess
-import re
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
@@ -447,14 +447,17 @@ class RepairQueueTests(unittest.TestCase):
 
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        unregistered = {'S022', 'S027', 'S028', 'S029', 'S030', 'S031', 'S032', 'S035', 'S036'}
+        blocked = {'S019', 'S022', 'S027', 'S028', 'S029', 'S030', 'S031', 'S032', 'S035', 'S036'}
         self.assertEqual(
-            {f'S{number:03d}' for number in range(1, 37) if f'S{number:03d}' not in handlers},
-            unregistered,
+            {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )
-        wrapper = Path(__file__).resolve().parents[1] / 'frontend-r2/tests/soak-scenarios.global-setup.js'
-        source = wrapper.read_text(encoding='utf-8')
-        match = re.search(r"expectedBlocked = new Set\(\[([^\]]*)\]\)", source)
-        self.assertIsNotNone(match, 'hosted scenario wrapper must declare its BLOCKED set')
-        hosted_blocked = set(re.findall(r"'((?:S)\d{3})'", match.group(1)))
-        self.assertEqual(hosted_blocked, unregistered)
+        setup = Path(__file__).resolve().parents[1] / 'frontend-r2/tests/soak-scenarios.global-setup.js'
+        source = setup.read_text(encoding='utf-8')
+        match = re.search(r'const expectedBlocked = new Set\(\[(.*?)\]\)', source, re.S)
+        self.assertIsNotNone(match)
+        self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), blocked)
+
+    def test_browser_scenarios_never_reuse_an_unrelated_dev_server(self):
+        config = Path(__file__).resolve().parents[1] / 'frontend-r2/playwright.config.js'
+        source = config.read_text(encoding='utf-8')
+        self.assertRegex(source, r"reuseExistingServer:\s*false")

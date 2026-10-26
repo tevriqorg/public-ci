@@ -223,9 +223,6 @@ def registry():
             'tests/test_migrations.py::test_active_job_index_migration_preserves_canonical_rows',
             'tests/test_migrations.py::test_active_job_index_migration_refuses_duplicates_without_deleting_rows'],
             cwd=ROOT/'implementation',timeout_seconds=90),
-        'S019': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_media_derivation_integration.py::test_s019_required_hevc_pcm_stream_copy_preserves_pts'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
         'S020': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_transcribe_cli.py::test_s020_asr_timeout_is_retryable_without_changing_media',
             'tests/test_transcribe_cli.py::test_s020_invalid_segment_is_rejected_and_media_stays_derived'],
@@ -243,22 +240,17 @@ def registry():
         'S026': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_repair_queue.py::RepairQueueTests::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
             cwd=ROOT/'implementation',timeout_seconds=90),
-        # S028/029/030/031/036 stay unregistered until every frozen subcase
-        # has a real injected execution and an independent oracle. Their
-        # narrower component tests still run in backend CI but cannot turn
-        # the broader catalog scenario green.
+        # These scenarios stay unregistered until every frozen subcase has
+        # real injection and independent oracles. S032's ledger test does not
+        # inspect canonical history; S019/022/027/035 have catalog subcases
+        # their current component tests do not execute. Component tests cannot
+        # turn a broader scenario green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),
-        # S032 is intentionally not registered: the daily evidence-ledger
-        # unit test does not verify historical source rows or archived files.
         'S034': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle'],
             cwd=ROOT/'implementation',timeout_seconds=90),
-        # S022's test-defined reducer does not exercise the production reducer.
-        # S027's secret scanner does not audit the Git worktree/index.
-        # S035's long-video derivation test does not execute the catalogued
-        # large-audio transcript path, so keep the complete scenario blocked.
     }
 
 

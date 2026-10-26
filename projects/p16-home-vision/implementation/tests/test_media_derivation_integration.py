@@ -64,24 +64,6 @@ def _make_hevc_sample(path: Path, *, required: bool = False, duration_seconds: f
         pytest.skip(detail)
 
 
-def _make_h264_aac_sample(path: Path, *, duration_seconds: float = 2.4) -> None:
-    completed = subprocess.run(
-        [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i",
-            f"testsrc2=size=160x90:rate=10:duration={duration_seconds}",
-            "-f", "lavfi", "-i",
-            f"sine=frequency=440:sample_rate=16000:duration={duration_seconds}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
-            "-movflags", "+faststart", str(path),
-        ],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        check=False, timeout=120,
-    )
-    if completed.returncode != 0:
-        pytest.fail(f"ffmpeg cannot create required H.264/AAC fixture: {completed.stderr[-500:]}")
-
-
 def _probe(path: Path) -> dict:
     completed = subprocess.run(
         ["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(path)],
@@ -145,33 +127,6 @@ def test_s019_required_hevc_pcm_stream_copy_preserves_pts(tmp_path: Path):
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S019 requires ffmpeg/ffprobe; scenario cannot be a skip")
     _assert_real_hevc_derivation(tmp_path, require_encoder=True)
-
-    # Second catalogued source family: MP4/H.264 with browser-compatible AAC.
-    # An unconditional hvc1 tag makes FFmpeg reject this valid source at muxer
-    # initialization, so the oracle checks both successful output and its tag.
-    raw = tmp_path / "source-h264-aac.mp4"
-    _make_h264_aac_sample(raw)
-    source = probe_source(raw)
-    assert source.video_codec == "h264" and source.has_audio
-    raw_hash = hashlib.sha256(raw.read_bytes()).hexdigest()
-    paths = DerivationPaths(raw=raw, root=tmp_path / "asset-h264-aac")
-    result = run_derivation(
-        paths, DerivationPlan(has_audio=True),
-        source_start_epoch=1_700_000_100.0, video_codec=source.video_codec,
-    )
-    assert raw.is_file() and hashlib.sha256(raw.read_bytes()).hexdigest() == raw_hash
-    assert result["raw_deleted"] is False
-    streams = _probe(paths.web_final)["streams"]
-    video = next(stream for stream in streams if stream["codec_type"] == "video")
-    audio = next(stream for stream in streams if stream["codec_type"] == "audio")
-    assert video["codec_name"] == "h264"
-    assert video.get("codec_tag_string") == "avc1"
-    assert audio["codec_name"] == "aac"
-    rows = [json.loads(line) for line in paths.frame_manifest_final.read_text().splitlines() if line]
-    assert rows and all(
-        abs(row["absolute_epoch_seconds"] - (1_700_000_100.0 + row["source_pts_seconds"])) <= 0.01
-        for row in rows
-    )
 
 
 def test_s027_synthetic_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch, capsys):

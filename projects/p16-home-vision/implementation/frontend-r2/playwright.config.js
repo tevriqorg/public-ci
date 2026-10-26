@@ -14,7 +14,9 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4173',
     url: 'http://127.0.0.1:4173',
-    reuseExistingServer: process.env.P16_SOAK_WRAPPER_CHILD === '1',
+    // Scenario wrappers must exercise the Vite process from this source tree.
+    // Reusing an unrelated listener could make browser evidence source-ambiguous.
+    reuseExistingServer: false,
     timeout: 30_000,
   },
 })

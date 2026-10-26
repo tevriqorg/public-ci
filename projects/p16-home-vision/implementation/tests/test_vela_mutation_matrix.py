@@ -54,14 +54,18 @@ def _run(session, now):
                                       enabled=True, timezone_verified=True)
 
 
-def test_s031_current_day_enqueue_mutant_is_killed(session):
-    """C1: the oracle kills a cutoff-removal mutant and accepts the real guard."""
+def test_s031_current_day_enqueue_canary_rejects_cutoff_mutant(session):
+    """C1: the same no-early-enqueue oracle rejects the mutant and accepts product."""
     day = datetime.now(timezone.utc).date()
     now = datetime.combine(day, time(12), tzinfo=timezone.utc)
     expected_cutoff = closed_day_cutoff_utc(now=now, timezone_name="UTC")
 
     _, source = _seed_current_day_source(session, day, now)
     original_scalars = session.scalars
+
+    def assert_current_day_not_queued(result, jobs):
+        assert result.eligible_count == 0
+        assert jobs == []
 
     def remove_closed_day_predicate(statement, *args, **kwargs):
         if (statement.column_descriptions
@@ -79,11 +83,15 @@ def test_s031_current_day_enqueue_mutant_is_killed(session):
         mutant_result = _run(session, now)
         session.flush()
         mutant_jobs = list(session.scalars(select(ArchiveJob)))
-        # Independent UTC calendar oracle detects the mutant because the
-        # current-day source ends after the true local-midnight cutoff.
+        # Independent UTC calendar oracle confirms this is a current-day source
+        # whose end is after the real closed-day boundary.
         oracle_rejects = source.source_end >= expected_cutoff
-        assert mutant_result.eligible_count == 1
         assert mutant_jobs and oracle_rejects
+        # Prove the actual acceptance invariant would fail for the injected
+        # product mutation; merely describing the mutant output can pass even
+        # when the canary itself has no rejecting assertion.
+        with pytest.raises(AssertionError):
+            assert_current_day_not_queued(mutant_result, mutant_jobs)
 
     session.rollback()
     _seed_current_day_source(session, day, now)
@@ -91,8 +99,61 @@ def test_s031_current_day_enqueue_mutant_is_killed(session):
     session.flush()
     actual_jobs = list(session.scalars(select(ArchiveJob)))
     assert actual_result.cutoff_utc == expected_cutoff
-    assert actual_result.eligible_count == 0
-    assert actual_jobs == []
+    assert_current_day_not_queued(actual_result, actual_jobs)
+
+
+def test_s031_future_ending_video_canary_rejects_cutoff_mutant(session):
+    """C2: a clip that crosses into tomorrow is never closed-day eligible."""
+    from types import SimpleNamespace
+
+    day = datetime.now(timezone.utc).date()
+    now = datetime.combine(day, time(12), tzinfo=timezone.utc)
+    expected_cutoff = closed_day_cutoff_utc(now=now, timezone_name="UTC")
+    _, source = _seed_current_day_source(session, day, now)
+    source.source_end = datetime.combine(day + timedelta(days=1), time(1),
+                                         tzinfo=timezone.utc)
+    source.duration_ms = 24 * 60 * 60 * 1000
+    session.flush()
+
+    def reject_future_source(result, jobs):
+        assert result.eligible_count == 0
+        assert jobs == []
+
+    original_scalars = session.scalars
+
+    def remove_closed_day_predicate(statement, *args, **kwargs):
+        if (statement.column_descriptions
+                and statement.column_descriptions[0].get("entity") is SourceRecording):
+            # Inject the production query mutant: omit only source_end <= cutoff.
+            rows = original_scalars(
+                select(SourceRecording).where(
+                    SourceRecording.nvr_id == "s031-nvr",
+                    SourceRecording.source_state == "available",
+                )
+            ).all()
+            return SimpleNamespace(all=lambda: rows)
+        return original_scalars(statement, *args, **kwargs)
+
+    with patch.object(session, "scalars", side_effect=remove_closed_day_predicate):
+        mutant_result = _run(session, now)
+        session.flush()
+        mutant_jobs = list(original_scalars(select(ArchiveJob)))
+        assert source.source_end > expected_cutoff
+        assert mutant_jobs
+        with pytest.raises(AssertionError):
+            reject_future_source(mutant_result, mutant_jobs)
+
+    session.rollback()
+    _, source = _seed_current_day_source(session, day, now)
+    source.source_end = datetime.combine(day + timedelta(days=1), time(1),
+                                         tzinfo=timezone.utc)
+    source.duration_ms = 24 * 60 * 60 * 1000
+    session.flush()
+    actual_result = _run(session, now)
+    session.flush()
+    actual_jobs = list(session.scalars(select(ArchiveJob)))
+    assert actual_result.cutoff_utc == expected_cutoff
+    reject_future_source(actual_result, actual_jobs)
 
 
 def test_s033_http_200_error_xml_and_invalid_video_are_rejected(session, tmp_path):
@@ -217,120 +278,115 @@ def test_s032_fifteen_day_history_is_immutable_across_recovery_and_restart(tmp_p
     assert p95 == pytest.approx(1.14)
 
 
-def _seed_s034_recording(session, *, suffix, track_id, observed_at, source_start, source_end):
-    nvr = NvrDevice(id=f"s034-{suffix}-nvr", name="S034 synthetic", host="127.0.0.1",
-                    timezone="Asia/Singapore")
-    session.add(nvr)
-    session.flush()
-    camera = CameraTrack(id=f"s034-{suffix}-camera", nvr_id=nvr.id, track_id=track_id,
-                         camera_name="S034 synthetic")
-    session.add(camera)
-    session.flush()
-    for index, completed in enumerate((
-        observed_at.astimezone(timezone.utc) - timedelta(minutes=2),
-        observed_at.astimezone(timezone.utc) - timedelta(minutes=1),
-    ), start=1):
-        session.add(ScanRun(
-            id=f"s034-{suffix}-scan-{index}", nvr_id=nvr.id, track_id=camera.track_id,
-            query_start=source_start - timedelta(days=1),
-            query_end=source_start + timedelta(days=1), state="success",
-            result_count=1, response_hash=f"s034-{suffix}-stable",
-            started_at=completed - timedelta(seconds=10), completed_at=completed,
-        ))
-    session.flush()
-    source = SourceRecording(
-        id=f"s034-{suffix}-source", nvr_id=nvr.id, track_id=camera.track_id,
-        source_start=source_start, source_end=source_end, duration_ms=60_000,
-        locator_fingerprint=f"synthetic-s034-{suffix}",
-        first_scan_id=f"s034-{suffix}-scan-1", last_scan_id=f"s034-{suffix}-scan-2",
-    )
-    session.add(source)
-    session.flush()
-    return nvr, camera, source
-
-
 def test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle(session):
-    """Execute UTC-midnight mutants through enqueue and verify the scan floor."""
+    """Execute a UTC-midnight mutant through enqueue and verify the scan floor."""
     from datetime import date
     from app.domain.nvr_scan import scan_camera_range
+    from app.models import CameraTrack, NvrDevice, ScanRun
 
     singapore = ZoneInfo("Asia/Singapore")
     before_midnight = datetime(2026, 10, 26, 23, 59, tzinfo=singapore)
     at_midnight = datetime(2026, 10, 27, 0, 0, tzinfo=singapore)
-    after_midnight = datetime(2026, 10, 27, 0, 3, tzinfo=singapore)
     expected_before = datetime(2026, 10, 25, 16, 0, tzinfo=timezone.utc)
     expected_after = datetime(2026, 10, 26, 16, 0, tzinfo=timezone.utc)
     assert closed_day_cutoff_utc(now=before_midnight, timezone_name="Asia/Singapore") == expected_before
     assert closed_day_cutoff_utc(now=at_midnight, timezone_name="Asia/Singapore") == expected_after
 
-    # A UTC-date-midnight mutation wrongly includes a still-growing local-day
-    # recording immediately before Singapore midnight.
-    nvr, _, source = _seed_s034_recording(
-        session, suffix="before", track_id="101", observed_at=before_midnight,
-        source_start=datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc),
-        source_end=datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc),
+    # Execute the UTC-date-midnight mutant against a real synthetic DB row.
+    # This source ends in the 8-hour gap where UTC midnight wrongly considers
+    # it closed, but Singapore midnight correctly considers it still open.
+    nvr = NvrDevice(id="s034-nvr", name="S034 synthetic", host="127.0.0.1",
+                    timezone="Asia/Singapore")
+    session.add(nvr)
+    session.flush()
+    camera = CameraTrack(id="s034-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S034 synthetic")
+    session.add(camera)
+    session.flush()
+    start = datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc)
+    for index, completed in enumerate((
+        before_midnight.astimezone(timezone.utc) - timedelta(minutes=2),
+        before_midnight.astimezone(timezone.utc) - timedelta(minutes=1),
+    ), start=1):
+        session.add(ScanRun(
+            id=f"s034-scan-{index}", nvr_id=nvr.id, track_id=camera.track_id,
+            query_start=start - timedelta(days=1), query_end=start + timedelta(days=1),
+            state="success", result_count=1, response_hash="s034-stable",
+            started_at=completed - timedelta(seconds=10), completed_at=completed,
+        ))
+    session.flush()
+    source = SourceRecording(
+        id="s034-gap-source", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=start, source_end=datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc),
+        duration_ms=60_000, locator_fingerprint="synthetic-s034",
+        first_scan_id="s034-scan-1", last_scan_id="s034-scan-2",
     )
+    session.add(source)
+    session.flush()
+
     utc_midnight_mutant = lambda *, now, timezone_name: datetime.combine(
         now.astimezone(timezone.utc).date(), time.min, tzinfo=timezone.utc
     )
     with patch("app.domain.auto_archive.closed_day_cutoff_utc", utc_midnight_mutant):
-        mutant = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=before_midnight,
-                                             enabled=True, timezone_verified=True)
+        mutant_result = enqueue_closed_day_backlog(
+            session, nvr_id=nvr.id, now=before_midnight,
+            enabled=True, timezone_verified=True,
+        )
         session.flush()
-        assert mutant.cutoff_utc == datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)
-        assert mutant.eligible_count == 1
-        assert len(list(session.scalars(select(ArchiveJob)))) == 1
-        assert source.source_end > expected_before  # independent local-calendar oracle kills it
+        mutant_jobs = list(session.scalars(select(ArchiveJob)))
+        independent_local_day_oracle_rejects = source.source_end > expected_before
+        assert mutant_result.cutoff_utc == datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)
+        assert mutant_result.eligible_count == 1
+        assert len(mutant_jobs) == 1
+        assert independent_local_day_oracle_rejects
 
     session.rollback()
-    nvr, _, _ = _seed_s034_recording(
-        session, suffix="before", track_id="101", observed_at=before_midnight,
-        source_start=datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc),
-        source_end=datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc),
-    )
-    actual = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=before_midnight,
-                                         enabled=True, timezone_verified=True)
+    nvr = NvrDevice(id="s034-nvr", name="S034 synthetic", host="127.0.0.1",
+                    timezone="Asia/Singapore")
+    session.add(nvr)
     session.flush()
-    assert actual.cutoff_utc == expected_before
-    assert actual.eligible_count == 0
+    camera = CameraTrack(id="s034-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S034 synthetic")
+    session.add(camera)
+    session.flush()
+    for index, completed in enumerate((
+        before_midnight.astimezone(timezone.utc) - timedelta(minutes=2),
+        before_midnight.astimezone(timezone.utc) - timedelta(minutes=1),
+    ), start=1):
+        session.add(ScanRun(
+            id=f"s034-scan-{index}", nvr_id=nvr.id, track_id=camera.track_id,
+            query_start=start - timedelta(days=1), query_end=start + timedelta(days=1),
+            state="success", result_count=1, response_hash="s034-stable",
+            started_at=completed - timedelta(seconds=10), completed_at=completed,
+        ))
+    session.flush()
+    source = SourceRecording(
+        id="s034-gap-source", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=start, source_end=datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc),
+        duration_ms=60_000, locator_fingerprint="synthetic-s034",
+        first_scan_id="s034-scan-1", last_scan_id="s034-scan-2",
+    )
+    session.add(source)
+    session.flush()
+    actual_result = enqueue_closed_day_backlog(
+        session, nvr_id=nvr.id, now=before_midnight,
+        enabled=True, timezone_verified=True,
+    )
+    session.flush()
+    assert actual_result.cutoff_utc == expected_before
+    assert actual_result.eligible_count == 0
     assert list(session.scalars(select(ArchiveJob))) == []
 
-    # Shortly after local midnight the same UTC-date mutant wrongly excludes
-    # a closed source; stable scans are post-cutoff so eligibility is decisive.
-    session.rollback()
-    nvr, camera, source = _seed_s034_recording(
-        session, suffix="after", track_id="102", observed_at=after_midnight,
-        source_start=datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc),
-        source_end=datetime(2026, 10, 26, 8, 0, tzinfo=timezone.utc),
-    )
-    with patch("app.domain.auto_archive.closed_day_cutoff_utc", utc_midnight_mutant):
-        mutant = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=after_midnight,
-                                             enabled=True, timezone_verified=True)
-        session.flush()
-        assert mutant.cutoff_utc == datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)
-        assert mutant.eligible_count == 0
-        assert list(session.scalars(select(ArchiveJob))) == []
-        assert source.source_end <= expected_after  # independent local-calendar oracle detects omission
-
-    session.rollback()
-    nvr, camera, _ = _seed_s034_recording(
-        session, suffix="after", track_id="102", observed_at=after_midnight,
-        source_start=datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc),
-        source_end=datetime(2026, 10, 26, 8, 0, tzinfo=timezone.utc),
-    )
-    actual = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=after_midnight,
-                                         enabled=True, timezone_verified=True)
-    session.flush()
-    assert actual.cutoff_utc == expected_after
-    assert actual.eligible_count == 1
-    assert len(list(session.scalars(select(ArchiveJob)))) == 1
+    class EmptySearcher:
+        def search_history(self, _request):
+            return []
 
     result = scan_camera_range(
         session, nvr=nvr, camera=camera,
         query_start=datetime(2026, 10, 25, 0, 0, tzinfo=timezone.utc),
         query_end=datetime(2026, 10, 27, 16, 0, tzinfo=timezone.utc),
-        searcher=type("EmptySearcher", (), {"search_history": lambda self, _request: []})(),
-        scan_id="s034-floor", scan_min_date=date(2026, 10, 26),
+        searcher=EmptySearcher(), scan_id="s034-floor",
+        scan_min_date=date(2026, 10, 26),
     )
     scan = session.get(ScanRun, result.scan_id)
     assert scan is not None
