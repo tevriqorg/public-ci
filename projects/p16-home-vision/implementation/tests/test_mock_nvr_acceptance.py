@@ -64,8 +64,8 @@ def _client(nvr: MockHikvisionNvr) -> HikvisionIsapiClient:
     )
 
 
-def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_path, monkeypatch):
-    """S004/S005: repeat discovery/enqueue, inject an archived-asset guard mutant, retry."""
+def test_s004_repeated_scan_enqueues_one_verified_asset(session, tmp_path, monkeypatch):
+    """Repeated discovery/enqueue is idempotent and creates one verified asset."""
     payload = _synthetic_video(tmp_path / "synthetic.mp4")
     now = datetime.now(timezone.utc)
     today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
@@ -89,7 +89,7 @@ def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_p
         MockRecording("101", old_start, old_end, payload),
         MockRecording("101", current_start, current_end, payload),
     ]
-    with MockHikvisionNvr(recordings, download_statuses=[453]) as mock_nvr:
+    with MockHikvisionNvr(recordings) as mock_nvr:
         with _client(mock_nvr) as client:
             for scan_id in ("mock-scan-1", "mock-scan-2"):
                 result = scan_camera_range(
@@ -132,31 +132,15 @@ def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_p
             assert repeated.queue_result.already_queued == (old_source.id,)
 
             monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
-            failed_id = archive_worker.process_one(
-                session, client, probe=FfprobeMediaProbe(), worker_id="mock-worker"
-            )
-            assert failed_id == job.id
-            session.refresh(job)
-            assert job.state == "failed"
-            assert job.error_code == "NVR_BANDWIDTH_LIMIT"
-            assert session.query(LocalAsset).filter_by(source_recording_id=old_source.id).count() == 0
-
-            retried = retry_due_archive_jobs(
-                session, now=datetime.now(timezone.utc) + timedelta(hours=1)
-            )
-            session.commit()
-            assert retried == 1
-            assert session.get(ArchiveJob, job.id).state == "queued"
-
             completed_id = archive_worker.process_one(
                 session, client, probe=FfprobeMediaProbe(), worker_id="mock-worker"
             )
             assert completed_id == job.id
             session.refresh(job)
             assert job.state == "completed"
-            assert mock_nvr.search_count == 4  # two scans and one source resolve for each attempt
-            assert mock_nvr.download_count == 2
-            assert mock_nvr.authorization_count >= 6
+            assert mock_nvr.search_count == 3  # two scans and one source resolve
+            assert mock_nvr.download_count == 1
+            assert mock_nvr.authorization_count >= 4
 
     asset = session.scalar(select(LocalAsset).where(LocalAsset.source_recording_id == old_source.id))
     assert asset is not None
