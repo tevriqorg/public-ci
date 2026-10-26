@@ -253,9 +253,11 @@ def registry():
             'tests/test_vela_mutation_matrix.py::test_s031_incorrect_hash_canary_rejects_digest_mutant',
             'tests/test_vela_mutation_matrix.py::test_s031_duplicate_enqueue_canary_rejects_missing_active_job_guard'],
             cwd=ROOT/'implementation',timeout_seconds=180),
+        'S032': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_reconciliation_storage.py::test_s032_reconciles_fifteen_day_media_evidence_and_source_history'],
+            cwd=ROOT/'implementation',timeout_seconds=120),
         # These scenarios stay unregistered until every frozen subcase has
-        # real injection and independent oracles. S032's ledger test does not
-        # inspect canonical history; S022 has no production reducer for its catalog
+        # real injection and independent oracles. S022 has no production reducer for its catalog
         # subcases, while S028/029/030/036 still lack their system-level or
         # multi-stage oracles. Component tests cannot turn broader scenarios green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',

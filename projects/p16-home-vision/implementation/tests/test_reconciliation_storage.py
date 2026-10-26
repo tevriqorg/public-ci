@@ -3,9 +3,16 @@ import hashlib
 from pathlib import Path
 from unittest.mock import patch
 from datetime import timedelta
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from app.domain.reconciliation import reconcile_storage_files
 from app.models import CameraTrack, LocalAsset, NvrDevice, SourceRecording, StorageVolume
+from scripts.p16_soak import enqueue_failures
+from scripts.vela_soak_runtime import EvidenceStore, digest, record_daily_cycle
+import json
+import sqlite3
 
 
 def test_s012_reports_storage_ledger_mismatches_without_mutating_rows_or_files(
@@ -144,8 +151,8 @@ def test_s012_reports_unreadable_recordings_subtree_instead_of_clean_result(
     } == {("RECORDINGS_SUBTREE_UNREADABLE", "recordings/unreadable-camera")}
 
 
-def test_component_reconciles_fifteen_days_of_historical_media_files(session, tmp_path: Path):
-    """A historical file mutation is visible to the read-only ledger audit."""
+def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, tmp_path: Path):
+    """One replay audits historical media, daily outcomes, failures, and revisions."""
     nvr = NvrDevice(id="s032-history-nvr", name="S032 synthetic", host="127.0.0.1")
     camera = CameraTrack(id="s032-history-camera", nvr_id=nvr.id, track_id="202",
                          camera_name="S032 synthetic")
@@ -196,6 +203,88 @@ def test_component_reconciles_fifteen_days_of_historical_media_files(session, tm
     assert len(rows_before) == 15
     for path, payload in snapshots.items():
         assert hashlib.sha256(path.read_bytes()).hexdigest() == expected_hashes[path]
+
+    # Produce a durable date-indexed evidence history. Source SHAs represent
+    # successive synthetic code revisions; a failed day is replayed after a
+    # revision, while both immutable runs and the original daily FAIL survive.
+    state = tmp_path / "s032-state"
+    store = EvidenceStore(state)
+    scheduled_start = first_day.isoformat()
+    evidence_rows = []
+    failed_day = first_day + timedelta(days=3)
+    for offset in range(15):
+        day = first_day + timedelta(days=offset)
+        source_sha = hashlib.sha256(f"synthetic-source-{offset}".encode()).hexdigest()[:40]
+        status = "FAIL" if day == failed_day else "PASS"
+        run_id = f"s032-day-{day.isoformat()}-original"
+        at = datetime.combine(day, datetime.min.time().replace(hour=12), tzinfo=timezone.utc)
+        daily = record_daily_cycle(
+            state, scheduled_start=scheduled_start, observed_day=day.isoformat(),
+            run_id=run_id, complete=status == "PASS", observed_at=at.isoformat(),
+        )
+        assert daily["attempt"] == (run_id, day.isoformat(), status)
+        record = {
+            "run_id": run_id, "source_sha": source_sha, "scenario_id": "S032",
+            "seed": "p16-g0-v1-S032", "timestamp_utc": at.isoformat(),
+            "status": status, "history_day": day.isoformat(),
+        }
+        store.append(record)
+        enqueue_failures(state, [record])
+        evidence_rows.append(record)
+        if day == failed_day:
+            fixed_sha = hashlib.sha256(b"synthetic-fixed-source-revision").hexdigest()[:40]
+            recovery_id = f"s032-day-{day.isoformat()}-recovery"
+            recovery = {
+                **record, "run_id": recovery_id, "source_sha": fixed_sha,
+                "timestamp_utc": (at + timedelta(hours=1)).isoformat(),
+                "status": "PASS", "recovery_of": run_id,
+            }
+            recovery_daily = record_daily_cycle(
+                state, scheduled_start=scheduled_start, observed_day=day.isoformat(),
+                run_id=recovery_id, complete=True,
+                observed_at=(at + timedelta(hours=1)).isoformat(),
+            )
+            assert recovery_daily["attempt"] == (recovery_id, day.isoformat(), "PASS")
+            store.append(recovery)
+            enqueue_failures(state, [recovery])
+            evidence_rows.append(recovery)
+
+    persisted = store.records()
+    assert len(persisted) == 16
+    assert {row["run_id"] for row in persisted} == {row["run_id"] for row in evidence_rows}
+    assert all(digest(record) == next(
+        path.stem for path in (state / "runs").glob("*.json")
+        if json.loads(path.read_text()) == record
+    ) for record in persisted)
+    assert len({record["source_sha"] for record in persisted}) == 16
+    with sqlite3.connect(state / "daily-ledger.sqlite3") as db:
+        schedule = db.execute(
+            "SELECT day, state FROM daily_schedule ORDER BY day"
+        ).fetchall()
+        attempts = db.execute(
+            "SELECT day, outcome FROM daily_attempts ORDER BY observed_at, run_id"
+        ).fetchall()
+    assert [day for day, _ in schedule] == [
+        (first_day + timedelta(days=offset)).isoformat() for offset in range(15)
+    ]
+    assert [state for _, state in schedule] == [
+        "FAIL" if day == failed_day.isoformat() else "PASS" for day, _ in schedule
+    ]
+    assert len(attempts) == 16
+    assert [outcome for day, outcome in attempts if day == failed_day.isoformat()] == [
+        "FAIL", "PASS",
+    ]
+    with sqlite3.connect(state / "repair-queue.sqlite3") as db:
+        tasks = db.execute("SELECT scenario, seed, source, status FROM tasks").fetchall()
+        observations = db.execute("SELECT run_id, evidence_hash FROM observations").fetchall()
+    assert tasks == [("S032", "p16-g0-v1-S032",
+                      next(row["source_sha"] for row in evidence_rows
+                           if row["history_day"] == failed_day.isoformat()),
+                      "NEEDS_REPRO_AND_FIX")]
+    assert len(observations) == 1
+    assert observations[0][1] == digest(next(
+        row for row in evidence_rows if row["status"] == "FAIL"
+    ))
 
     # Mutate a past file without changing size; an independent bytes-based SHA
     # oracle must identify exactly the affected historical ledger row.
