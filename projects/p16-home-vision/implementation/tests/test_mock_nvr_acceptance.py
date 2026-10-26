@@ -27,6 +27,7 @@ from app.models import (
     CameraTrack,
     LocalAsset,
     NvrDevice,
+    ScanRun,
     SourceRecording,
     StorageVolume,
 )
@@ -682,3 +683,37 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session,
     assert (volume_root / asset.relative_path).read_bytes() == payload
     assert len(list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))) == 1
     assert mock_nvr.download_count == 2
+
+
+def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session):
+    """S010: exercise real HTTP Digest 401 challenge and rejected credentials."""
+    nvr = NvrDevice(id="s010-nvr", name="S010 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s010-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S010 synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    start = datetime.now(timezone.utc) - timedelta(days=2)
+
+    with MockHikvisionNvr([]) as mock_nvr:
+        with HikvisionIsapiClient(
+            base_url=mock_nvr.base_url, username="synthetic-wrong-user",
+            password="synthetic-wrong-password", timeout_seconds=5,
+        ) as client:
+            result = scan_camera_range(
+                session, nvr=nvr, camera=camera,
+                query_start=start, query_end=start + timedelta(days=1),
+                searcher=client, scan_id="s010-rejected-scan",
+            )
+        assert mock_nvr.challenge_count == 1
+        assert mock_nvr.rejected_digest_count == 1
+        assert mock_nvr.authorization_count == 0
+        assert mock_nvr.search_count == 0
+
+    assert (result.state, result.error_code) == ("failed", "NVR_SEARCH_HTTP_403")
+    assert "synthetic-wrong-password" not in repr(result)
+    scan = session.get(ScanRun, result.scan_id)
+    assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
+    assert list(session.scalars(select(SourceRecording).where(
+        SourceRecording.nvr_id == nvr.id))) == []

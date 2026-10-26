@@ -55,6 +55,8 @@ class MockHikvisionNvr:
         self.search_count = 0
         self.download_count = 0
         self.authorization_count = 0
+        self.challenge_count = 0
+        self.rejected_digest_count = 0
         self._lock = threading.Lock()
         owner = self
 
@@ -78,6 +80,8 @@ class MockHikvisionNvr:
             def _authorized(self) -> bool:
                 header = self.headers.get("Authorization", "")
                 if not header.startswith("Digest "):
+                    with owner._lock:
+                        owner.challenge_count += 1
                     self.send_response(401)
                     self.send_header(
                         "WWW-Authenticate",
@@ -112,7 +116,10 @@ class MockHikvisionNvr:
                     with owner._lock:
                         owner.authorization_count += 1
                 else:
+                    with owner._lock:
+                        owner.rejected_digest_count += 1
                     self._send(403, b"", "text/plain")
+                    return False
                 return valid
 
             def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
