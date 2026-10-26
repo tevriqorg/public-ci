@@ -1,6 +1,10 @@
 import json
 import errno
+import hashlib
 import shutil
+import struct
+import sys
+import wave
 from unittest.mock import patch
 
 import pytest
@@ -37,20 +41,31 @@ def test_package_rejects_escape_and_missing_artifacts(tmp_path):
         build_analysis_package(package_id="p", asset_id="a", source_manifest={}, pipeline={}, artifacts=[{"artifact_id":"x","artifact_type":"x","path":"missing"}], artifact_root=root)
 
 
-def test_s023_published_artifact_snapshot_survives_transcript_retry(tmp_path):
-    source = tmp_path / "source"
-    source.mkdir()
-    transcript = source / "transcript.json"
+def test_s023_published_artifact_snapshot_survives_transcript_retry(tmp_path, monkeypatch):
+    source = tmp_path / "asset-1"
+    audio = source / "audio" / "speech.wav"
+    audio.parent.mkdir(parents=True)
+    with wave.open(str(audio), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16_000)
+        wav.writeframes(struct.pack("<4800h", *([2000] * 4800)))
+    (source / "status.json").write_text(json.dumps({
+        "asset_id": "asset-1", "state": "derived",
+        "stages": {"web": "done", "frames": "done", "audio": "done", "transcript": "failed"},
+        "transcript": {"state": "failed", "attempts": 1, "retryable": True},
+    }))
+    transcript = source / "transcript" / "transcript.json"
+    transcript.parent.mkdir()
     original = b'{"schema":"p16.transcript.v1","revision":1}\n'
-    retry = b'{"schema":"p16.transcript.v1","revision":2}\n'
     transcript.write_bytes(original)
 
     package = build_analysis_package(
-        package_id="s023-package", asset_id="s023-asset",
+        package_id="s023-package", asset_id="asset-1",
         source_manifest={"source_id": "synthetic-s023"},
         pipeline={"revision": "p16-core-s023"},
         artifacts=[{"artifact_id": "transcript-s023", "artifact_type": "transcript",
-                    "path": "transcript.json"}],
+                    "path": "transcript/transcript.json"}],
         artifact_root=source,
     )
     package_path = publish_immutable_package(
@@ -63,13 +78,27 @@ def test_s023_published_artifact_snapshot_survives_transcript_retry(tmp_path):
 
     assert snapshot.is_relative_to(package_path.parent.resolve())
     assert snapshot.read_bytes() == original
-    transcript.write_bytes(retry)
 
-    assert transcript.read_bytes() == retry
+    asr = tmp_path / "asr.py"
+    asr.write_text("print('[{\\\"start_ms\\\":0,\\\"end_ms\\\":300,\\\"text\\\":\\\"retry transcript\\\"}]')\n")
+    monkeypatch.setattr(sys, "argv", [
+        "p16-media-transcribe", "--asset-root", str(tmp_path), "--asset-id", "asset-1",
+        "--local-asr-command", sys.executable, str(asr),
+    ])
+    from media_derivation.transcribe_cli import main as transcribe_main
+    assert transcribe_main() == 0
+
+    retry_bytes = transcript.read_bytes()
+    assert retry_bytes != original
+    assert json.loads(retry_bytes)["segments"][0]["text"] == "retry transcript"
+    status = json.loads((source / "status.json").read_text())
+    assert status["state"] == "derived"
+    assert status["stages"]["transcript"] == "done"
+    assert status["transcript"]["attempts"] == 2
     assert package_path.read_bytes() == manifest_bytes
     assert snapshot.read_bytes() == original
     assert len(original) == artifact["size_bytes"]
-    assert __import__("hashlib").sha256(snapshot.read_bytes()).hexdigest() == artifact["sha256"]
+    assert hashlib.sha256(snapshot.read_bytes()).hexdigest() == artifact["sha256"]
     # Re-publishing the exact revision stays idempotent even after the source path
     # is replaced by a retry; it never aliases the new transcript bytes.
     assert publish_immutable_package(
