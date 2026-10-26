@@ -469,6 +469,10 @@ class RepairQueueTests(unittest.TestCase):
         match = re.search(r'const expectedBlocked = new Set\(\[(.*?)\]\)', source, re.S)
         self.assertIsNotNone(match)
         self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), blocked)
+        self.assertIn("records[0].seed !== catalogById.get(scenarioId)?.seed", source)
+        self.assertIn("records[0].reason !== 'SCENARIO_NOT_IMPLEMENTED'", source)
+        self.assertIn("files.length !== scenarioIds.length", source)
+        self.assertIn("P16_SCENARIO_EVIDENCE_ID_SET_INVALID", source)
 
     def test_browser_replay_reuse_is_limited_to_hosted_matrix_children(self):
         config = Path(__file__).resolve().parents[1] / 'frontend-r2/playwright.config.js'
