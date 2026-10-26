@@ -521,6 +521,188 @@ def test_model_runner_timeout_does_not_block_synthetic_archive(session, tmp_path
     assert mock_nvr.download_count == 1
 
 
+def test_component_post_archive_optional_stage_failures_keep_raw_verified(
+    session, tmp_path, monkeypatch,
+):
+    """Exercise real ASR/Reduce/Package failure entries after verified archive."""
+    import os
+    import sys
+    import math
+    import struct
+    import time
+    import wave
+
+    from app.domain.analysis_package import AnalysisPackageError, build_analysis_package, publish_immutable_package
+    from app.domain.ffmpeg_frame_reducer import FfmpegLumaDifferenceReducer
+    from app.domain.frame_reduce import load_working_frame_manifest
+    from media_derivation.pipeline import DerivationPaths, DerivationPlan, run_derivation
+
+    payload = _synthetic_video(tmp_path / "s036-optional-stages.mp4")
+    now = datetime.now(timezone.utc)
+    today = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)
+    source_start = today - timedelta(hours=2)
+    source_end = source_start + timedelta(seconds=3)
+    nvr = NvrDevice(id="s036-stage-nvr", name="S036 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s036-stage-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S036 synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    volume_root = tmp_path / "s036-stage-volume"
+    session.add(StorageVolume(
+        id="s036-stage-volume", node_id="ci-fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    ))
+    session.flush()
+
+    recording = MockRecording("101", source_start, source_end, payload)
+    with MockHikvisionNvr([recording]) as mock_nvr:
+        with _client(mock_nvr) as client:
+            for scan_id in ("s036-stage-scan-1", "s036-stage-scan-2"):
+                scan = scan_camera_range(
+                    session, nvr=nvr, camera=camera,
+                    query_start=today - timedelta(days=1),
+                    query_end=today + timedelta(days=1),
+                    searcher=client, scan_id=scan_id,
+                    scan_min_date=now.date() - timedelta(days=2),
+                )
+                assert (scan.state, scan.discovered_count) == ("success", 1)
+                session.commit()
+            queued = enqueue_closed_day_backlog(
+                session, nvr_id=nvr.id, now=datetime.now(timezone.utc),
+                enabled=True, timezone_verified=True,
+            )
+            assert queued.eligible_count == 1 and queued.queue_result is not None
+            job = session.get(ArchiveJob, queued.queue_result.queued[0])
+            assert job is not None and job.state == "queued"
+            monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+            assert archive_worker.process_one(
+                session, client, probe=FfprobeMediaProbe(), worker_id="s036-stage-worker",
+            ) == job.id
+            session.refresh(job)
+            assert job.state == "completed"
+
+    archive_asset = session.scalar(select(LocalAsset).where(
+        LocalAsset.source_recording_id == job.source_recording_id,
+    ))
+    assert archive_asset is not None
+    assert (archive_asset.verification_state, archive_asset.lifecycle_state) == ("verified", "present")
+    archive_path = volume_root / archive_asset.relative_path
+    archive_bytes = archive_path.read_bytes()
+    archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+    assert archive_sha == hashlib.sha256(payload).hexdigest()
+
+    timeline_path = tmp_path / "s036-stage-outcomes.jsonl"
+    timeline = []
+
+    def persist_failure(stage, started_at, error_code):
+        finished_at = datetime.now(timezone.utc)
+        outcome = {
+            "stage": stage, "attempt": 1, "state": "failed", "retryable": True,
+            "started_at": started_at.isoformat(), "finished_at": finished_at.isoformat(),
+            "error_code": error_code,
+        }
+        with timeline_path.open("ab") as stream:
+            stream.write((json.dumps(outcome, sort_keys=True, separators=(",", ":")) + "\n").encode())
+            stream.flush()
+            os.fsync(stream.fileno())
+        timeline.append(outcome)
+
+    derivation_root = tmp_path / "s036-derived"
+    paths = DerivationPaths(raw=archive_path, root=derivation_root)
+    derived = run_derivation(
+        paths, DerivationPlan(has_audio=True), source_start_epoch=time.time() - 3600,
+    )
+    with wave.open(str(paths.audio_final), "wb") as audio_file:
+        audio_file.setnchannels(1)
+        audio_file.setsampwidth(2)
+        audio_file.setframerate(16_000)
+        audio_file.writeframes(struct.pack(
+            "<16000h", *(int(2000 * math.sin(2 * math.pi * 440 * i / 16_000))
+                          for i in range(16_000)),
+        ))
+    derived_status = {
+        "asset_id": derivation_root.name, "state": "derived",
+        "stages": {"web": "done", "frames": "done", "audio": "done", "transcript": "idle"},
+    }
+    status_path = derivation_root / "status.json"
+    status_path.write_text(json.dumps(derived_status), encoding="utf-8")
+
+    asr_failure = tmp_path / "s036-asr-fail.py"
+    asr_failure.write_text("import sys\nsys.exit(23)\n", encoding="utf-8")
+    asr_started = datetime.now(timezone.utc)
+    asr = subprocess.run(
+        [sys.executable, "-m", "media_derivation.transcribe_cli",
+         "--asset-root", str(tmp_path), "--asset-id", derivation_root.name,
+         "--local-asr-command", sys.executable, str(asr_failure)],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, check=False, timeout=30,
+    )
+    assert asr.returncode == 1
+    asr_status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert asr_status["state"] == "derived"
+    assert asr_status["stages"]["transcript"] == "failed"
+    assert asr_status["transcript"]["retryable"] is True
+    persist_failure("asr", asr_started, asr_status["transcript"]["error_code"])
+
+    frames = load_working_frame_manifest(Path(derived["frame_manifest"]), asset_id=derivation_root.name)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    child_marker = tmp_path / "s036-reducer-child-started"
+    fake_ffmpeg = fake_bin / "ffmpeg"
+    fake_ffmpeg.write_text(
+        "#!/bin/sh\nprintf started > \"$FRAME_REDUCE_CHILD_MARKER\"\nexec sleep 2\n",
+        encoding="utf-8",
+    )
+    fake_ffmpeg.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("FRAME_REDUCE_CHILD_MARKER", str(child_marker))
+    reducer = FfmpegLumaDifferenceReducer(
+        paths.frames_dir, change_threshold=0.1, timeout_seconds=0.05,
+    )
+    reduce_started = datetime.now(timezone.utc)
+    with pytest.raises(ValueError, match="FRAME_REDUCE_DECODE_FAILED"):
+        reducer.reduce((frames[0],))
+    assert child_marker.read_text(encoding="utf-8") == "started"
+    persist_failure("frame_reduce", reduce_started, "FRAME_REDUCE_DECODE_FAILED")
+
+    artifact_root = tmp_path / "s036-package-artifacts"
+    artifact_root.mkdir()
+    artifact = artifact_root / "transcript.json"
+    artifact.write_text('{"schema":"p16.transcript.v1"}\n', encoding="utf-8")
+    package = build_analysis_package(
+        package_id="s036-package", asset_id=archive_asset.id,
+        source_manifest={"source_sha256": archive_sha}, pipeline={"version": "synthetic"},
+        artifacts=[{"artifact_id": "transcript", "artifact_type": "transcript",
+                    "path": "transcript.json"}], artifact_root=artifact_root,
+    )
+    artifact.unlink()
+    package_started = datetime.now(timezone.utc)
+    with pytest.raises(AnalysisPackageError, match="PACKAGE_ARTIFACT_MISSING"):
+        publish_immutable_package(
+            tmp_path / "s036-package", package, artifact_root=artifact_root,
+        )
+    persist_failure("analysis_package", package_started, "PACKAGE_ARTIFACT_MISSING")
+
+    persisted = [json.loads(line) for line in timeline_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["stage"] for event in persisted] == ["asr", "frame_reduce", "analysis_package"]
+    assert persisted == timeline
+    assert all(event["state"] == "failed" and event["retryable"] for event in persisted)
+    assert all(datetime.fromisoformat(event["finished_at"]) >= datetime.fromisoformat(event["started_at"])
+               for event in persisted)
+    assert not (tmp_path / "s036-package" / "analysis-package.json").exists()
+
+    session.expire_all()
+    remaining_assets = list(session.scalars(select(LocalAsset).where(
+        LocalAsset.source_recording_id == job.source_recording_id,
+    )))
+    session.refresh(job)
+    assert job.state == "completed"
+    assert len(remaining_assets) == 1 and remaining_assets[0].sha256 == archive_sha
+    assert archive_path.read_bytes() == archive_bytes
+    assert hashlib.sha256(archive_path.read_bytes()).hexdigest() == archive_sha
+    assert mock_nvr.download_count == 1
+
+
 def test_s001_two_camera_closed_day_archives_only_closed_segments(session, tmp_path, monkeypatch):
     """S001: discover two cameras, preserve only closed-day sources, archive both."""
     payload = _synthetic_video(tmp_path / "s001-synthetic.mp4")
