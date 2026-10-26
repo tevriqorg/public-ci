@@ -177,7 +177,7 @@ def registry():
             'tests/test_mock_nvr_acceptance.py::test_s006_invalid_download_part_is_quarantined_before_bounded_retry'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         'S007': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_archive_pipeline.py::test_finalize_recovers_valid_promoted_file_after_database_commit_gap'],
+            'tests/test_archive_worker_recovery.py::test_s007_sigkill_after_file_promotion_recovers_without_nvr_redownload'],
             cwd=ROOT/'implementation',timeout_seconds=90),
         'S008': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_archive_worker_recovery.py::test_s008_cross_volume_orphan_is_adopted_without_duplicate_or_download'],

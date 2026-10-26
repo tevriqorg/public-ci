@@ -1,8 +1,17 @@
 import hashlib
-from datetime import datetime, timezone
+import multiprocessing
+import os
+import signal
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from sqlalchemy.orm import sessionmaker
+
+from app.db import create_db_engine
+from app.domain import archive_pipeline
 from app.infra.media.ffprobe import MediaProbeResult
+from app.infra.nvr.hikvision import DiscoveredSegment
 from app.models import AuditEvent, ArchiveJob, CameraTrack, LocalAsset, NvrDevice, SourceRecording, StorageVolume
 from scripts import archive_worker
 
@@ -21,6 +30,48 @@ class NoNetworkClient:
 
     def download_to_part(self, *_args, **_kwargs):
         raise AssertionError("orphan recovery must not redownload source media")
+
+
+class _S007SyntheticClient:
+    def __init__(self):
+        self.segment = DiscoveredSegment(
+            track_id="201", source_start=datetime(2026, 8, 27, 6, tzinfo=timezone.utc),
+            source_end=datetime(2026, 8, 27, 6, 0, 10, tzinfo=timezone.utc),
+            duration_ms=10_000, locator_fingerprint="s007-synthetic",
+            playback_uri="synthetic://s007", source_size_if_known=4096,
+        )
+
+    def search_history(self, _request):
+        return [self.segment]
+
+    def download_to_part(self, _uri, part_path, *, progress_callback=None):
+        payload = b"VIDEO" + b"x" * 4091
+        part_path.parent.mkdir(parents=True, exist_ok=True)
+        part_path.write_bytes(payload)
+        if progress_callback:
+            progress_callback(len(payload))
+        return len(payload)
+
+
+def _s007_kill_after_promotion(database_url, promoted_pipe):
+    engine = create_db_engine(database_url)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    original_replace = archive_pipeline.os.replace
+
+    def promote_then_pause(source, destination):
+        original_replace(source, destination)
+        if Path(source).suffix == ".part" and Path(destination).suffix == ".mp4":
+            promoted_pipe.send((str(destination), hashlib.sha256(Path(destination).read_bytes()).hexdigest()))
+            while True:
+                time.sleep(10)
+
+    archive_pipeline.os.replace = promote_then_pause
+    archive_worker._touch_heartbeat = lambda *_args, **_kwargs: None
+    with factory() as child_session:
+        archive_worker.process_one(
+            child_session, _S007SyntheticClient(), probe=FakeProbe(), worker_id="s007-kill-worker"
+        )
+    engine.dispose()
 
 
 def test_worker_adopts_valid_promoted_orphan_before_nvr_access(session, tmp_path, monkeypatch):
@@ -123,6 +174,79 @@ def test_s008_cross_volume_orphan_is_adopted_without_duplicate_or_download(
     assert session.query(AuditEvent).filter_by(
         event_type="archive_orphan_recovered", entity_id=asset.id
     ).count() == 1
+
+
+def test_s007_sigkill_after_file_promotion_recovers_without_nvr_redownload(session, tmp_path):
+    nvr = NvrDevice(id="nvr-s007-kill", name="S007 synthetic", host="127.0.0.1")
+    camera = CameraTrack(id="camera-s007-kill", nvr_id=nvr.id, track_id="201",
+                         camera_name="S007 synthetic")
+    source = SourceRecording(
+        id="source-s007-kill", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=datetime(2026, 8, 27, 6, tzinfo=timezone.utc),
+        source_end=datetime(2026, 8, 27, 6, 0, 10, tzinfo=timezone.utc),
+        duration_ms=10_000, source_size_if_known=4096, source_state="available",
+    )
+    volume_root = tmp_path / "s007-volume"
+    volume = StorageVolume(
+        id="volume-s007-kill", node_id="fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    )
+    job = ArchiveJob(id="job-s007-kill", source_recording_id=source.id, state="queued")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    session.add(source)
+    session.add(volume)
+    session.flush()
+    session.add(job)
+    session.commit()
+
+    context = multiprocessing.get_context("fork")
+    recv_pipe, send_pipe = context.Pipe(duplex=False)
+    child = context.Process(
+        target=_s007_kill_after_promotion,
+        args=(session.get_bind().url.render_as_string(hide_password=False), send_pipe),
+    )
+    child.start()
+    send_pipe.close()
+    try:
+        assert recv_pipe.poll(20), "worker never reached the post-promotion crash point"
+        promoted_path, promoted_hash = recv_pipe.recv()
+        os.kill(child.pid, signal.SIGKILL)
+        child.join(timeout=10)
+        assert child.exitcode == -signal.SIGKILL
+
+        final_path = Path(promoted_path)
+        assert final_path.is_file()
+        assert hashlib.sha256(final_path.read_bytes()).hexdigest() == promoted_hash
+        session.expire_all()
+        assert session.query(LocalAsset).filter_by(source_recording_id=source.id).count() == 0
+        interrupted = session.get(ArchiveJob, job.id)
+        assert interrupted.state == "verifying"
+
+        interrupted.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        session.commit()
+        archive_worker._recover_interrupted_jobs(session)
+        assert session.get(ArchiveJob, job.id).state == "queued"
+        archive_worker._touch_heartbeat = lambda *_args, **_kwargs: None
+        assert archive_worker.process_one(
+            session, NoNetworkClient(), probe=FakeProbe(), worker_id="s007-recovery-worker"
+        ) == job.id
+
+        asset = session.query(LocalAsset).filter_by(source_recording_id=source.id).one()
+        assert session.get(ArchiveJob, job.id).state == "completed"
+        assert asset.verification_state == "verified"
+        assert asset.sha256 == promoted_hash
+        assert hashlib.sha256(final_path.read_bytes()).hexdigest() == promoted_hash
+        assert session.query(AuditEvent).filter_by(
+            event_type="archive_orphan_recovered", entity_id=asset.id
+        ).count() == 1
+    finally:
+        if child.is_alive():
+            os.kill(child.pid, signal.SIGKILL)
+            child.join(timeout=10)
+        recv_pipe.close()
 
 
 import pytest
