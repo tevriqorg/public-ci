@@ -260,9 +260,9 @@ def registry():
             'tests/test_reconciliation_storage.py::test_s032_reconciles_fifteen_day_media_evidence_and_source_history'],
             cwd=ROOT/'implementation',timeout_seconds=120),
         # These scenarios stay unregistered until every frozen subcase has
-        # real injection and independent oracles. S022 has no production reducer for its catalog
-        # subcases, while S028/029/030/036 still lack their system-level or
-        # multi-stage oracles. Component tests cannot turn broader scenarios green.
+        # real injection and independent oracles. S022 still needs representative
+        # target benchmarking and a Human threshold decision; S028/029/030 still
+        # lack their system-level or independent-review oracles.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),
@@ -272,6 +272,9 @@ def registry():
         'S035': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded'],
             cwd=ROOT/'implementation',timeout_seconds=240),
+        'S036': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_mock_nvr_acceptance.py::test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
     }
 
 

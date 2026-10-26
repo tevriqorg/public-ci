@@ -1,4 +1,4 @@
 repository=tevriqorg/P16-Home-Vision
 branch=test/p16r2-vela-15d-soak
-commit=a786d1c905ac7018d5b8b29d8e329979c61cb710
-copied_paths=implementation/app/domain/ffmpeg_frame_reducer.py,implementation/tests/test_ffmpeg_frame_reducer.py
+commit=d3dd0dc245691077bb91939ee960628ebcfa2753
+copied_paths=implementation/

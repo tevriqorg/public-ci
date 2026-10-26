@@ -457,10 +457,16 @@ class RepairQueueTests(unittest.TestCase):
 
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S028', 'S029', 'S030', 'S036'}
+        blocked = {'S022', 'S028', 'S029', 'S030'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )
+        registry_source = (Path(__file__).resolve().parents[1] / 'scripts/p16_soak.py').read_text(
+            encoding='utf-8',
+        )
+        self.assertIn("'S036': command_handler", registry_source)
+        self.assertIn('test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged',
+                      registry_source)
         setup = Path(__file__).resolve().parents[1] / 'frontend-r2/tests/soak-scenarios.global-setup.js'
         source = setup.read_text(encoding='utf-8')
         match = re.search(r'const expectedBlocked = new Set\(\[(.*?)\]\)', source, re.S)
