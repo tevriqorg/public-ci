@@ -16,6 +16,8 @@ from sqlalchemy.orm import sessionmaker
 from app.domain.archive_pipeline import ArchiveValidationError, verify_part
 from app.domain.archive_queue import retry_due_archive_jobs
 from app.domain.auto_archive import enqueue_closed_day_backlog
+from app.domain.analysis_contract import AnalysisRequest, ModelRunnerError
+from analysis_worker.model_runner import FailingFixtureModelRunner
 from app.domain.nvr_scan import scan_camera_range
 from app.infra.media.ffprobe import FfprobeMediaProbe, MediaProbeResult
 from app.infra.nvr.hikvision import HikvisionIsapiClient, build_search_request_xml
@@ -275,3 +277,72 @@ def test_simulated_nvr_rejects_mutating_http_methods():
     with MockHikvisionNvr([]) as mock_nvr:
         response = httpx.put(f"{mock_nvr.base_url}/ISAPI/ContentMgmt/search", timeout=5)
     assert response.status_code == 405
+
+
+def test_s036_model_timeout_does_not_block_synthetic_archive(session, tmp_path, monkeypatch):
+    """S036: fail Intelligence first, then complete the independent media archive path."""
+    payload = _synthetic_video(tmp_path / "s036-synthetic.mp4")
+    now = datetime.now(timezone.utc)
+    today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
+    source_start = today - timedelta(hours=2)
+    source_end = source_start + timedelta(seconds=3)
+    nvr = NvrDevice(id="s036-nvr", name="S036 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s036-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S036 synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    volume_root = tmp_path / "s036-volume"
+    session.add(StorageVolume(
+        id="s036-volume", node_id="ci-fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    ))
+    session.flush()
+
+    recording = MockRecording("101", source_start, source_end, payload)
+    with MockHikvisionNvr([recording]) as mock_nvr:
+        with _client(mock_nvr) as client:
+            for scan_id in ("s036-scan-1", "s036-scan-2"):
+                scanned = scan_camera_range(
+                    session, nvr=nvr, camera=camera,
+                    query_start=today - timedelta(days=1),
+                    query_end=today + timedelta(days=1),
+                    searcher=client, scan_id=scan_id,
+                    scan_min_date=now.date() - timedelta(days=2),
+                )
+                assert (scanned.state, scanned.discovered_count) == ("success", 1)
+                session.commit()
+
+            auto = enqueue_closed_day_backlog(
+                session, nvr_id=nvr.id, now=datetime.now(timezone.utc),
+                enabled=True, timezone_verified=True,
+            )
+            assert auto.eligible_count == 1
+            job = session.get(ArchiveJob, auto.queue_result.queued[0])
+            assert job is not None and job.state == "queued"
+
+            request = AnalysisRequest(
+                run_id="s036-analysis", asset_id="pending-media-asset", profile_id="s036",
+                profile_revision=1, profile_snapshot_hash="synthetic-profile-hash",
+                semantic_intent=None, output_schema_json=None,
+                media_ref="synthetic://s036", evidence=(),
+            )
+            with pytest.raises(ModelRunnerError, match="MODEL_TIMEOUT"):
+                FailingFixtureModelRunner("MODEL_TIMEOUT").analyze(request)
+            assert job.state == "queued"
+
+            monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+            processed = archive_worker.process_one(
+                session, client, probe=FfprobeMediaProbe(), worker_id="s036-worker")
+            assert processed == job.id
+            session.refresh(job)
+            assert job.state == "completed"
+
+    asset = session.scalar(select(LocalAsset).where(
+        LocalAsset.source_recording_id == job.source_recording_id))
+    assert asset is not None
+    assert (asset.verification_state, asset.lifecycle_state) == ("verified", "present")
+    assert asset.sha256 == hashlib.sha256(payload).hexdigest()
+    assert (volume_root / asset.relative_path).read_bytes() == payload
+    assert mock_nvr.search_count == 3
+    assert mock_nvr.download_count == 1

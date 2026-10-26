@@ -152,6 +152,9 @@ def registry():
         'S035': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s035_ten_minute_derivation_stays_within_time_memory_and_storage_bounds'],
             cwd=ROOT/'implementation',timeout_seconds=240),
+        'S036': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_mock_nvr_acceptance.py::test_s036_model_timeout_does_not_block_synthetic_archive'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
     }
 
 
