@@ -251,7 +251,7 @@ def registry():
             cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
         # real injection and independent oracles. S032's ledger test does not
-        # inspect canonical history; S019/022/027 component tests omit catalog
+        # inspect canonical history; S022/027 component tests omit catalog
         # subcases, while S028/029/030/036 still lack their system-level or
         # multi-stage oracles. Component tests cannot turn broader scenarios green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
