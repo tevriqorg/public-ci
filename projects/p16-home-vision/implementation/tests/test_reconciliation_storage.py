@@ -291,10 +291,9 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
                       next(row["source_sha"] for row in evidence_rows
                            if row["history_day"] == failed_day.isoformat()),
                       "NEEDS_REPRO_AND_FIX")]
-    assert len(observations) == 1
-    assert observations[0][1] == digest(next(
-        row for row in evidence_rows if row["status"] == "FAIL"
-    ))
+    assert {run_id: evidence_hash for run_id, evidence_hash in observations} == {
+        row["run_id"]: digest(row) for row in evidence_rows
+    }
 
     # Persist and independently recompute a date-indexed hash chain over every
     # immutable run, including the old failure and its later source revision.
