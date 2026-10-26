@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
+from unittest.mock import patch
 
 from app.domain.reconciliation import reconcile_storage_files
 from app.models import CameraTrack, LocalAsset, NvrDevice, SourceRecording, StorageVolume
@@ -66,6 +68,21 @@ def test_s012_reports_storage_ledger_mismatches_without_mutating_rows_or_files(
         (row.id, row.lifecycle_state, row.verification_state, row.relative_path)
         for row in rows
     ]
+
+    clean_asset = next(row for row in rows if row.id == "s012-asset-clean")
+    independent_sha = hashlib.sha256(clean_path.read_bytes()).hexdigest()
+    assert independent_sha != clean_asset.sha256
+    # C2 canary: a bad-hash mutant that echoes the ledger value must be killed
+    # by an oracle derived independently from the synthetic media bytes.
+    with patch(
+        "app.domain.reconciliation._sha256_file", return_value=clean_asset.sha256
+    ):
+        mutant_result = reconcile_storage_files(session)
+    assert not any(
+        finding.code == "ASSET_SHA256_MISMATCH" for finding in mutant_result.findings
+    )
+    assert independent_sha != clean_asset.sha256
+
     result = reconcile_storage_files(session)
 
     assert {
@@ -77,6 +94,10 @@ def test_s012_reports_storage_ledger_mismatches_without_mutating_rows_or_files(
         ("DELETED_FILE_PRESENT", deleted_path.relative_to(tmp_path).as_posix(),
          "s012-asset-deleted"),
         ("FILE_ONLY_MEDIA", file_only_path.relative_to(tmp_path).as_posix(), None),
+        ("ASSET_SHA256_MISMATCH", clean_path.relative_to(tmp_path).as_posix(),
+         "s012-asset-clean"),
+        ("ASSET_SIZE_MISMATCH", clean_path.relative_to(tmp_path).as_posix(),
+         "s012-asset-clean"),
     }
     assert not result.clean
     assert [
