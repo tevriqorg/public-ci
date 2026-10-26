@@ -1006,3 +1006,43 @@ def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session):
     assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
     assert list(session.scalars(select(SourceRecording).where(
         SourceRecording.nvr_id == nvr.id))) == []
+
+
+    # The catalogued wrong-nonce branch uses valid credentials, so the server
+    # must reject the Digest response specifically because it signed the
+    # advertised nonce while the fixture expects a different nonce.
+    nonce_nvr = NvrDevice(
+        id="s010-nonce-nvr", name="S010 wrong nonce", host="127.0.0.1", timezone="UTC",
+    )
+    nonce_camera = CameraTrack(
+        id="s010-nonce-camera", nvr_id=nonce_nvr.id, track_id="101",
+        camera_name="S010 wrong nonce",
+    )
+    session.add(nonce_nvr)
+    session.flush()
+    session.add(nonce_camera)
+    session.flush()
+    with MockHikvisionNvr([], challenge_nonce="p16-advertised-wrong-nonce") as mock_nvr:
+        assert mock_nvr.challenge_nonce != mock_nvr.nonce
+        with HikvisionIsapiClient(
+            base_url=mock_nvr.base_url, username=mock_nvr.username,
+            password=mock_nvr.password, timeout_seconds=5,
+        ) as client:
+            result = scan_camera_range(
+                session, nvr=nonce_nvr, camera=nonce_camera,
+                query_start=start, query_end=start + timedelta(days=1),
+                searcher=client, scan_id="s010-wrong-nonce-scan",
+            )
+        assert mock_nvr.challenge_count == 1
+        assert mock_nvr.rejected_digest_count == 1
+        assert mock_nvr.authorization_count == 0
+        assert mock_nvr.search_count == 0
+        assert mock_nvr.download_count == 0
+
+    assert (result.state, result.error_code) == ("failed", "NVR_SEARCH_HTTP_403")
+    scan = session.get(ScanRun, result.scan_id)
+    assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
+    assert list(session.scalars(select(SourceRecording).where(
+        SourceRecording.nvr_id == nonce_nvr.id))) == []
+    assert list(session.scalars(select(ArchiveJob))) == []
+    assert list(session.scalars(select(LocalAsset))) == []

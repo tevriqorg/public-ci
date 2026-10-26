@@ -52,6 +52,7 @@ class MockHikvisionNvr:
         search_delays: list[float] | None = None,
         download_delays: list[float] | None = None,
         error_payload_once: bool = False,
+        challenge_nonce: str | None = None,
     ) -> None:
         self.recordings = recordings
         self.search_statuses = list(search_statuses or [])
@@ -59,6 +60,7 @@ class MockHikvisionNvr:
         self.search_delays = list(search_delays or [])
         self.download_delays = list(download_delays or [])
         self.error_payload_once = error_payload_once
+        self.challenge_nonce = self.nonce if challenge_nonce is None else challenge_nonce
         self.search_count = 0
         self.download_count = 0
         self.authorization_count = 0
@@ -97,7 +99,7 @@ class MockHikvisionNvr:
                     self.send_response(401)
                     self.send_header(
                         "WWW-Authenticate",
-                        f'Digest realm="{owner.realm}", nonce="{owner.nonce}", algorithm=MD5, qop="auth"',
+                        f'Digest realm="{owner.realm}", nonce="{owner.challenge_nonce}", algorithm=MD5, qop="auth"',
                     )
                     self.send_header("Content-Length", "0")
                     self.send_header("Connection", "close")
