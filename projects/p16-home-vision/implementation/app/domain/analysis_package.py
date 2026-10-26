@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import errno
 import os
 import shutil
 import tempfile
@@ -73,9 +74,8 @@ def _atomic_snapshot(
     if snapshot_root.is_symlink():
         raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
     if snapshot_root.exists():
-        if all(verified(snapshot_root / item["path"], item) for item in artifacts):
-            return
-        raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
+        _verify_existing_snapshot(package_dir, package_revision, artifacts)
+        return
 
     staging = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=snapshot_root.parent))
     try:
@@ -105,9 +105,10 @@ def _atomic_snapshot(
             os.chmod(directory, 0o555)
         try:
             os.rename(staging, snapshot_root)
-        except FileExistsError:
-            if not all(verified(snapshot_root / item["path"], item) for item in artifacts):
-                raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
+        except OSError as exc:
+            if exc.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                raise
+            _verify_existing_snapshot(package_dir, package_revision, artifacts)
         directory = os.open(snapshot_root.parent, os.O_RDONLY)
         try:
             os.fsync(directory)
@@ -115,7 +116,30 @@ def _atomic_snapshot(
             os.close(directory)
     finally:
         if staging.exists():
+            for directory, _, _ in os.walk(staging, topdown=False):
+                os.chmod(directory, 0o755)
             shutil.rmtree(staging)
+
+
+def _verify_existing_snapshot(package_dir: Path, package_revision: str,
+                              artifacts: list[dict[str, Any]]) -> None:
+    snapshot_root = package_dir / "artifact-snapshots" / package_revision
+    if snapshot_root.is_symlink() or not snapshot_root.is_dir():
+        raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
+    root = snapshot_root.resolve(strict=True)
+    for item in artifacts:
+        rel = item.get("path")
+        if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts:
+            raise AnalysisPackageError("PACKAGE_ARTIFACT_PATH_UNSAFE")
+        path = snapshot_root / rel
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT") from exc
+        if (path.is_symlink() or not resolved.is_relative_to(root) or not resolved.is_file()
+                or resolved.stat().st_size != item["size_bytes"]
+                or _sha256(resolved) != item["sha256"]):
+            raise AnalysisPackageError("PACKAGE_SNAPSHOT_CORRUPT")
 
 
 def publish_immutable_package(
@@ -137,6 +161,8 @@ def publish_immutable_package(
     body = (json.dumps(published, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if target.exists():
         if target.read_bytes() == body:
+            if package.get("artifacts"):
+                _verify_existing_snapshot(package_dir, package_revision, package["artifacts"])
             return target
         raise AnalysisPackageError("PACKAGE_IMMUTABLE_CONFLICT")
     if package.get("artifacts"):

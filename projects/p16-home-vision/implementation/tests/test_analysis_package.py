@@ -1,4 +1,7 @@
 import json
+import errno
+import shutil
+from unittest.mock import patch
 
 import pytest
 
@@ -72,3 +75,55 @@ def test_s023_published_artifact_snapshot_survives_transcript_retry(tmp_path):
     assert publish_immutable_package(
         package_path.parent, package, artifact_root=source
     ) == package_path
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_idempotent_publish_rejects_missing_or_corrupt_snapshot_without_repair(tmp_path, damage):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "transcript.json").write_bytes(b"original transcript")
+    package = build_analysis_package(
+        package_id="snapshot-check", asset_id="asset",
+        source_manifest={}, pipeline={},
+        artifacts=[{"artifact_id": "transcript", "artifact_type": "transcript",
+                    "path": "transcript.json"}], artifact_root=source)
+    package_dir = tmp_path / "packages"
+    target = publish_immutable_package(package_dir, package, artifact_root=source)
+    artifact = json.loads(target.read_bytes())["artifacts"][0]
+    snapshot = package_dir / artifact["path"]
+    if damage == "missing":
+        snapshot.parent.chmod(0o755)
+        snapshot.unlink()
+    else:
+        snapshot.chmod(0o644)
+        snapshot.write_bytes(b"corrupt snapshot")
+    (source / "transcript.json").write_bytes(b"retry transcript")
+
+    with pytest.raises(AnalysisPackageError, match="PACKAGE_SNAPSHOT_CORRUPT"):
+        publish_immutable_package(package_dir, package, artifact_root=source)
+    assert target.exists()
+    assert not snapshot.exists() if damage == "missing" else snapshot.read_bytes() == b"corrupt snapshot"
+
+
+def test_concurrent_snapshot_rename_race_verifies_winner_and_removes_staging(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "image.bin").write_bytes(b"snapshot bytes")
+    package = build_analysis_package(
+        package_id="race", asset_id="asset", source_manifest={}, pipeline={},
+        artifacts=[{"artifact_id": "image", "artifact_type": "frame", "path": "image.bin"}],
+        artifact_root=source)
+    package_dir = tmp_path / "packages"
+    from app.domain import analysis_package
+
+    def concurrent_winner(staging, destination):
+        shutil.copytree(staging, destination)
+        raise OSError(errno.ENOTEMPTY, "destination populated by concurrent publisher")
+
+    with patch.object(analysis_package.os, "rename", side_effect=concurrent_winner):
+        target = publish_immutable_package(package_dir, package, artifact_root=source)
+
+    assert json.loads(target.read_bytes())["package_id"] == "race"
+    snapshots = package_dir / "artifact-snapshots"
+    assert len(list(snapshots.iterdir())) == 1
+    assert not list(snapshots.glob(".snapshot-*"))

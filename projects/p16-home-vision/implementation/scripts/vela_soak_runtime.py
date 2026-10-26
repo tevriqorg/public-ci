@@ -146,12 +146,16 @@ def record_daily_cycle(root, *, scheduled_start, observed_day, run_id,
         db.execute("CREATE TABLE IF NOT EXISTS daily_attempts (run_id TEXT PRIMARY KEY, day TEXT NOT NULL, observed_at TEXT NOT NULL, outcome TEXT NOT NULL)")
         cursor = start
         while cursor <= execution_day:
-            # Only a complete run for its actual Singapore calendar date can
-            # mark that date PASS. A late catch-up remains an attempt, never
-            # retroactive calendar-day credit.
-            state = ("PASS" if complete else "FAIL") if cursor == day == execution_day else "MISSING"
-            db.execute("INSERT OR IGNORE INTO daily_schedule VALUES (?, ?)",
-                       (cursor.isoformat(), state))
+            # Finalize elapsed dates as MISSING. Leave today's slot open when
+            # this attempt is only catching up an older date; a later on-date
+            # run may still earn that date's outcome.
+            if cursor < execution_day:
+                db.execute("INSERT OR IGNORE INTO daily_schedule VALUES (?, 'MISSING')",
+                           (cursor.isoformat(),))
+            elif cursor == day:
+                state = "PASS" if complete else "FAIL"
+                db.execute("INSERT OR IGNORE INTO daily_schedule VALUES (?, ?)",
+                           (cursor.isoformat(), state))
             cursor += timedelta(days=1)
         outcome = "PASS" if complete else "FAIL"
         try:

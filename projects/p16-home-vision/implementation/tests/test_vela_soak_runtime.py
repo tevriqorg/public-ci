@@ -27,7 +27,7 @@ class RuntimeTests(unittest.TestCase):
                 observed_at="2026-10-25T00:20:00+08:00")
             self.assertEqual(late_first["schedule"], [
                 ("2026-10-22", "MISSING"), ("2026-10-23", "MISSING"),
-                ("2026-10-24", "MISSING"), ("2026-10-25", "MISSING")])
+                ("2026-10-24", "MISSING")])
             self.assertEqual(late_first["attempt"],
                              ("first-late-catchup", "2026-10-23", "PASS"))
         with tempfile.TemporaryDirectory() as d:
@@ -51,6 +51,22 @@ class RuntimeTests(unittest.TestCase):
                 with self.assertRaises(BlockingIOError):
                     with cycle_lock(d):
                         pass
+
+    def test_s028_older_catchup_leaves_current_day_open_for_daily_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            catchup = record_daily_cycle(
+                d, scheduled_start="2026-10-22", observed_day="2026-10-23",
+                run_id="catchup-23", complete=True,
+                observed_at="2026-10-25T00:20:00+08:00")
+            self.assertEqual(catchup["schedule"], [
+                ("2026-10-22", "MISSING"), ("2026-10-23", "MISSING"),
+                ("2026-10-24", "MISSING")])
+            daily = record_daily_cycle(
+                d, scheduled_start="2026-10-22", observed_day="2026-10-25",
+                run_id="daily-25", complete=True,
+                observed_at="2026-10-25T00:25:00+08:00")
+            self.assertEqual(daily["schedule"], catchup["schedule"] + [
+                ("2026-10-25", "PASS")])
 
     def test_original_fail_survives_linked_recovery_and_duplicate_rejected(self):
         with tempfile.TemporaryDirectory() as d:
