@@ -18,6 +18,7 @@ import sys
 import time
 
 from p2_canary_guard import verify_live_canary
+from issue126_canary_session_renew import ensure_fresh_session
 
 CASES = (
     ("at_rest", "issue126_canary_at_rest.py", "PASS_CANARY_AT_REST_ONLY"),
@@ -77,6 +78,20 @@ def run(root: Path, *, source_root: Path):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError("another L2 preflight owns the exclusive lock") from exc
+        # The dedicated clone session JWT lasts only 24h; fail closed and
+        # rotate before its expiry, without changing any production credentials.
+        # This maintenance probe is NOT a fifth business acceptance case.
+        try:
+            session_renew = ensure_fresh_session(root, guard=lambda _: state)
+        except Exception as exc:
+            _append_private(root / "l2-preflight-results.jsonl", {
+                "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "result": "PRECHECK_BLOCKED_L2_SUBSET", "trial_id": None,
+                "formal_soak_started": False, "checks": [],
+                "session_renew_error_type": type(exc).__name__,
+                "source_revision": "session-renew-failed",
+            })
+            raise
         checks = []
         for name, filename, _ in CASES:
             script = source_root / "scripts" / filename
@@ -113,6 +128,8 @@ def run(root: Path, *, source_root: Path):
                 if (source_root / "SOURCE_REVISION").is_file() else "unfrozen-source",
             "canary_source_sha": state.get("source_sha"),
             "duration_seconds": round(time.monotonic() - start, 2),
+            "session_renewed": session_renew["rotated"],
+            "session_access_expires_at_utc": session_renew["access_expires_at_utc"],
         }
         _append_private(root / "l2-preflight-results.jsonl", event)
         print(json.dumps({"result": event["result"], "tested_cases": len(checks),
