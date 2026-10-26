@@ -226,15 +226,37 @@ def process_one(
         nvr = session.get(NvrDevice, source.nvr_id)
         if nvr is None:
             raise NvrProtocolError("NVR_NOT_REGISTERED")
+        volumes = session.scalars(select(StorageVolume)).all()
         volume = select_storage_volume(
-            session.scalars(select(StorageVolume)).all(),
+            volumes,
             required_bytes=source.source_size_if_known or 0,
         )
         day = source.source_start.strftime("%Y/%m/%d")
         camera = _safe_part(source.track_id)
         stem = f"{source.source_start.strftime('%H%M%S')}-{_safe_part(source.id)}"
         relative_path = f"recordings/{day}/camera-{camera}/{stem}.mp4"
-        final_path = Path(volume.mount_path_runtime) / relative_path
+        # Volume selection may change after a crash. Search every currently
+        # online volume for this deterministic final before contacting the NVR,
+        # so a valid promoted orphan on a previous volume is adopted in place.
+        orphan_candidates = []
+        for candidate_volume in volumes:
+            if not candidate_volume.online:
+                continue
+            candidate_root = Path(candidate_volume.mount_path_runtime)
+            candidate_final = candidate_root / relative_path
+            if candidate_final.is_symlink():
+                raise ArchiveValidationError("ARCHIVE_PATH_UNSAFE")
+            if candidate_final.exists():
+                resolved_root = candidate_root.resolve(strict=False)
+                if not candidate_final.resolve(strict=False).is_relative_to(resolved_root):
+                    raise ArchiveValidationError("ARCHIVE_PATH_UNSAFE")
+                orphan_candidates.append((candidate_volume, candidate_final))
+        if len(orphan_candidates) > 1:
+            raise ArchiveValidationError("MULTIPLE_ORPHAN_FINALS")
+        if orphan_candidates:
+            volume, final_path = orphan_candidates[0]
+        else:
+            final_path = Path(volume.mount_path_runtime) / relative_path
         part_path = final_path.with_suffix(final_path.suffix + ".part")
         if final_path.exists():
             # A crash may occur after atomic promotion but before the database
