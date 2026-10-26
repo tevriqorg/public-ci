@@ -76,6 +76,7 @@ def main() -> int:
             DerivationPaths(raw=args.raw, root=asset_dir),
             DerivationPlan(has_audio=source.has_audio),
             source_start_epoch=args.source_start_epoch,
+            video_codec=source.video_codec,
         )
     except Exception as exc:
         _write_json_atomic(

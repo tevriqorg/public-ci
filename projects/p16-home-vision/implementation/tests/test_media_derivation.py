@@ -10,7 +10,7 @@ from media_derivation.pipeline import (
 
 def test_build_command_stream_copies_web_video_and_extracts_frames_and_audio(tmp_path: Path):
     paths = DerivationPaths(raw=tmp_path / "raw.mpeg", root=tmp_path / "asset")
-    cmd = build_ffmpeg_command(paths, DerivationPlan(has_audio=True))
+    cmd = build_ffmpeg_command(paths, DerivationPlan(has_audio=True), video_codec="hevc")
 
     assert ["-c:v", "copy"] == cmd[cmd.index("-c:v") : cmd.index("-c:v") + 2]
     assert "hvc1" in cmd
@@ -21,10 +21,19 @@ def test_build_command_stream_copies_web_video_and_extracts_frames_and_audio(tmp
 
 def test_build_command_skips_audio_output_when_source_has_no_audio(tmp_path: Path):
     paths = DerivationPaths(raw=tmp_path / "raw.mpeg", root=tmp_path / "asset")
-    cmd = build_ffmpeg_command(paths, DerivationPlan(has_audio=False))
+    cmd = build_ffmpeg_command(paths, DerivationPlan(has_audio=False), video_codec="hevc")
 
     assert str(paths.audio_part) not in cmd
     assert "pcm_s16le" not in cmd
+
+
+def test_build_command_does_not_apply_hevc_tag_to_h264(tmp_path: Path):
+    paths = DerivationPaths(raw=tmp_path / "raw.mp4", root=tmp_path / "asset")
+    cmd = build_ffmpeg_command(paths, DerivationPlan(has_audio=True), video_codec="h264")
+
+    assert "-c:v" in cmd
+    assert "copy" in cmd
+    assert "hvc1" not in cmd
 
 
 def test_parse_showinfo_uses_pts_not_frame_index():

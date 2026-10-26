@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from media_derivation.probe import probe_source
+
 _SHOWINFO_RE = re.compile(r"\bn:\s*(?P<n>\d+)\b.*?\bpts_time:(?P<pts>-?\d+(?:\.\d+)?)")
 
 
@@ -66,12 +68,15 @@ class DerivationPlan:
     audio_rate_hz: int = 16_000
 
 
-def build_ffmpeg_command(paths: DerivationPaths, plan: DerivationPlan) -> list[str]:
+def build_ffmpeg_command(
+    paths: DerivationPaths, plan: DerivationPlan, *, video_codec: str
+) -> list[str]:
     """Build one-input/multi-output FFmpeg command.
 
-    Web playback keeps the verified HEVC bitstream by stream copy. A decoded video
-    branch emits 1 fps working frames, while audio is normalized to mono 16 kHz WAV
-    for local ASR when an audio stream exists.
+    Web playback keeps the video bitstream by stream copy. Only HEVC needs an
+    explicit browser-compatible hvc1 tag; other codecs use the MP4 muxer's tag.
+    A decoded video branch emits 1 fps working frames, while audio is normalized
+    to mono 16 kHz WAV for local ASR when an audio stream exists.
     """
 
     cmd = [
@@ -88,8 +93,6 @@ def build_ffmpeg_command(paths: DerivationPaths, plan: DerivationPlan) -> list[s
         "0:a:0?",
         "-c:v",
         "copy",
-        "-tag:v",
-        "hvc1",
         "-c:a",
         "aac",
         "-b:a",
@@ -110,6 +113,10 @@ def build_ffmpeg_command(paths: DerivationPaths, plan: DerivationPlan) -> list[s
         str(plan.jpeg_quality),
         str(paths.frames_work_dir / "%08d.jpg"),
     ]
+
+    if video_codec.lower() in {"hevc", "h265"}:
+        insert_at = cmd.index("-c:a")
+        cmd[insert_at:insert_at] = ["-tag:v", "hvc1"]
 
     if plan.has_audio:
         cmd += [
@@ -190,6 +197,7 @@ def run_derivation(
     plan: DerivationPlan,
     *,
     source_start_epoch: float | None = None,
+    video_codec: str | None = None,
 ) -> dict[str, object]:
     """Run the transactional media-derivation PoC.
 
@@ -201,8 +209,9 @@ def run_derivation(
         raise FileNotFoundError(paths.raw)
 
     _prepare(paths)
+    codec = video_codec or probe_source(paths.raw).video_codec
     completed = subprocess.run(
-        build_ffmpeg_command(paths, plan),
+        build_ffmpeg_command(paths, plan, video_codec=codec),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
