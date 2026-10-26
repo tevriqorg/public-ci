@@ -85,6 +85,9 @@ def registry():
     # Each registered test contains product assertions; unimplemented scenarios
     # deliberately remain absent, never credited by generic regression results.
     return {
+        'S001': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_mock_nvr_acceptance.py::test_s001_two_camera_closed_day_archives_only_closed_segments'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
         'S014': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_scan_nvr.py::test_single_camera_failure_does_not_block_stable_peer'],
             cwd=ROOT/'implementation',timeout_seconds=90),

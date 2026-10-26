@@ -346,3 +346,93 @@ def test_s036_model_timeout_does_not_block_synthetic_archive(session, tmp_path, 
     assert (volume_root / asset.relative_path).read_bytes() == payload
     assert mock_nvr.search_count == 3
     assert mock_nvr.download_count == 1
+
+
+def test_s001_two_camera_closed_day_archives_only_closed_segments(session, tmp_path, monkeypatch):
+    """S001: discover two cameras, preserve only closed-day sources, archive both."""
+    payload = _synthetic_video(tmp_path / "s001-synthetic.mp4")
+    now = datetime.now(timezone.utc)
+    today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
+    elapsed = (now - today).total_seconds()
+    assert elapsed >= 2, "synthetic current-day segment requires a non-future interval"
+    current_start = today + timedelta(seconds=elapsed * 0.5)
+    current_end = today + timedelta(seconds=elapsed * 0.75)
+    old_start = today - timedelta(hours=2)
+    old_end = old_start + timedelta(seconds=3)
+    assert old_end <= now and current_end <= now
+
+    nvr = NvrDevice(id="s001-nvr", name="S001 synthetic", host="127.0.0.1", timezone="UTC")
+    session.add(nvr)
+    session.flush()
+    cameras = []
+    for track in ("101", "102"):
+        camera = CameraTrack(id=f"s001-camera-{track}", nvr_id=nvr.id,
+                             track_id=track, camera_name=f"S001 camera {track}")
+        session.add(camera)
+        cameras.append(camera)
+    volume_root = tmp_path / "s001-volume"
+    session.add(StorageVolume(
+        id="s001-volume", node_id="ci-fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    ))
+    session.flush()
+
+    recordings = []
+    for track in ("101", "102"):
+        recordings.extend([
+            MockRecording(track, old_start, old_end, payload),
+            MockRecording(track, current_start, current_end, payload),
+        ])
+    with MockHikvisionNvr(recordings) as mock_nvr:
+        with _client(mock_nvr) as client:
+            for scan_number in (1, 2):
+                for camera in cameras:
+                    scanned = scan_camera_range(
+                        session, nvr=nvr, camera=camera,
+                        query_start=today - timedelta(days=1),
+                        query_end=today + timedelta(days=1),
+                        searcher=client, scan_id=f"s001-scan-{scan_number}-{camera.track_id}",
+                        scan_min_date=now.date() - timedelta(days=2),
+                    )
+                    assert (scanned.state, scanned.discovered_count) == ("success", 2)
+                    session.commit()
+
+            auto = enqueue_closed_day_backlog(
+                session, nvr_id=nvr.id, now=datetime.now(timezone.utc),
+                enabled=True, timezone_verified=True,
+            )
+            assert auto.eligible_count == 2
+            assert auto.queue_result is not None
+            queued_ids = set(auto.queue_result.queued)
+            assert len(queued_ids) == 2
+            queued_jobs = list(session.scalars(select(ArchiveJob).where(
+                ArchiveJob.id.in_(queued_ids))))
+            assert {job.source_recording_id for job in queued_jobs} == {
+                source.id for source in session.scalars(select(SourceRecording).where(
+                    SourceRecording.nvr_id == nvr.id,
+                    SourceRecording.source_end <= auto.cutoff_utc))
+            }
+            assert len(list(session.scalars(select(SourceRecording).where(
+                SourceRecording.nvr_id == nvr.id,
+                SourceRecording.source_end > auto.cutoff_utc)))) == 2
+
+            monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+            processed = {
+                archive_worker.process_one(session, client, probe=FfprobeMediaProbe(),
+                                           worker_id="s001-worker")
+                for _ in range(2)
+            }
+            assert processed == queued_ids
+            for job in queued_jobs:
+                session.refresh(job)
+                assert job.state == "completed"
+
+    assets = list(session.scalars(select(LocalAsset).where(
+        LocalAsset.source_recording_id.in_([job.source_recording_id for job in queued_jobs]))))
+    assert len(assets) == 2
+    assert all((asset.verification_state, asset.lifecycle_state) == ("verified", "present")
+               for asset in assets)
+    assert all(asset.sha256 == hashlib.sha256(payload).hexdigest() for asset in assets)
+    assert all((volume_root / asset.relative_path).read_bytes() == payload for asset in assets)
+    assert mock_nvr.search_count == 6
+    assert mock_nvr.download_count == 2
