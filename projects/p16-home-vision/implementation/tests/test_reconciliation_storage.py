@@ -398,7 +398,52 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
     assert chain_path.read_bytes() == chain_snapshot
     assert sample_path.read_bytes() == sample_snapshot
 
+    # Missing historical bytes and an untracked historical MP4 are distinct
+    # production reconciliation findings. The first is DB-only; the second is
+    # file-only. Keep the prior same-size mutation present so one replay checks
+    # all three independent drift classes together.
+    missing_path = sorted(snapshots)[7]
+    missing_bytes = missing_path.read_bytes()
+    missing_path.unlink()
+    untracked_path = tmp_path / "recordings" / "2035-01-02" / "camera-202" / "untracked.mp4"
+    untracked_bytes = b"synthetic untracked historical media"
+    untracked_path.parent.mkdir(parents=True, exist_ok=True)
+    untracked_path.write_bytes(untracked_bytes)
+
+    drifted = reconcile_storage_files(session)
+    drift_findings = {
+        (finding.code, finding.relative_path, finding.asset_id)
+        for finding in drifted.findings
+    }
+    missing_offset = sorted(snapshots).index(missing_path)
+    assert drift_findings == {
+        ("ASSET_SHA256_MISMATCH", mutated_path.relative_to(tmp_path).as_posix(),
+         "s032-history-asset-03"),
+        ("DB_ONLY_ASSET", missing_path.relative_to(tmp_path).as_posix(),
+         f"s032-history-asset-{missing_offset:02d}"),
+        ("FILE_ONLY_MEDIA", untracked_path.relative_to(tmp_path).as_posix(), None),
+    }
+    assert not any(finding.code == "ASSET_SIZE_MISMATCH" for finding in drifted.findings)
+    assert not missing_path.exists()
+    assert untracked_path.read_bytes() == untracked_bytes
+    assert [
+        (asset.id, asset.relative_path, asset.size_bytes, asset.sha256,
+         asset.lifecycle_state, asset.verification_state)
+        for asset in session.query(LocalAsset).filter_by(storage_volume_id=volume.id).all()
+    ] == rows_before
+    assert [
+        (source.id, source.track_id, source.source_start, source.source_end,
+         source.duration_ms, source.source_state)
+        for source in session.query(SourceRecording).filter_by(nvr_id=nvr.id).order_by(
+            SourceRecording.id
+        ).all()
+    ] == sources_before
+    assert chain_path.read_bytes() == chain_snapshot
+    assert sample_path.read_bytes() == sample_snapshot
+
     mutated_path.write_bytes(original_bytes)
+    missing_path.write_bytes(missing_bytes)
+    untracked_path.unlink()
     restored = reconcile_storage_files(session)
     assert restored.clean
     assert len([path for path in (tmp_path / "recordings").rglob("*.mp4")]) == 15
