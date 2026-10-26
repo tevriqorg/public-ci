@@ -113,13 +113,13 @@ def enqueue_failures(root, records):
     # record must not leave even a partially initialized repair queue behind.
     for r in records:
         _validate_failure(r)
-        if r['status'] != 'FAIL':
-            continue
         key = digest([r['scenario_id'], r['seed'], r['source_sha']])
         evidence_hash = digest(r)
         previous = batch_run_ids.setdefault(r['run_id'], (key, evidence_hash))
         if previous != (key, evidence_hash):
             raise ValueError('REPAIR_OBSERVATION_CONFLICT')
+        if r['status'] != 'FAIL':
+            continue
         failures.append((key, r, evidence_hash))
 
     with sqlite3.connect(queue_path) as db:
