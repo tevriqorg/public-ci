@@ -483,6 +483,8 @@ class RepairQueueTests(unittest.TestCase):
         match = re.search(r'const expectedBlocked = new Set\(\[(.*?)\]\)', source, re.S)
         self.assertIsNotNone(match)
         self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), blocked)
+        self.assertIn('if (dirtyPaths.length > 0)', source)
+        self.assertIn('P16_IMPLEMENTATION_SOURCE_DIRTY:${dirtyPaths.length}', source)
         self.assertIn("records[0].seed !== catalogById.get(scenarioId)?.seed", source)
         self.assertIn("records[0].reason !== 'SCENARIO_NOT_IMPLEMENTED'", source)
         self.assertIn("files.length !== scenarioIds.length", source)
