@@ -13,7 +13,10 @@ def main() -> int:
     parser.add_argument("--asset-root", required=True, type=Path)
     parser.add_argument("--asset-id", required=True)
     parser.add_argument("--local-asr-command", nargs="+", required=True)
+    parser.add_argument("--asr-timeout-seconds", type=float, default=300)
     args = parser.parse_args()
+    if args.asr_timeout_seconds <= 0:
+        parser.error("ASR_TIMEOUT_MUST_BE_POSITIVE")
 
     root = args.asset_root.resolve()
     asset_dir = (root / args.asset_id).resolve()
@@ -35,6 +38,7 @@ def main() -> int:
     attempts = previous.get("attempts", 0) if isinstance(previous, dict) else 0
     asr = JsonCommandASR(
         tuple(args.local_asr_command), backend_id=Path(args.local_asr_command[0]).name,
+        timeout_seconds=args.asr_timeout_seconds,
     )
     try:
         transcript = build_transcript(args.asset_id, audio_path, asr)

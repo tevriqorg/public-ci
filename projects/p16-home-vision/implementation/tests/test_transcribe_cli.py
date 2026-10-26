@@ -1,7 +1,6 @@
 import json
 import hashlib
 import os
-import subprocess
 import struct
 import sys
 import wave
@@ -91,20 +90,17 @@ def test_s020_asr_timeout_is_retryable_without_changing_media(tmp_path, monkeypa
     audio = asset / "audio" / "speech.wav"
     media_hash_before = hashlib.sha256(audio.read_bytes()).hexdigest()
     command = tmp_path / "timeout-asr.py"
-    command.write_text("pass\n")
+    child_started = tmp_path / "asr-child-started"
+    command.write_text(
+        f"from pathlib import Path; import time; Path({str(child_started)!r}).write_text('started'); time.sleep(2)\n"
+    )
     monkeypatch.setattr(sys, "argv", [
         "p16-media-transcribe", "--asset-root", str(tmp_path), "--asset-id", "asset-1",
         "--local-asr-command", sys.executable, str(command),
+        "--asr-timeout-seconds", "0.1",
     ])
-    invocations = []
-
-    def timeout_asr(argv, **kwargs):
-        invocations.append((argv, kwargs.get("timeout")))
-        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
-
-    monkeypatch.setattr("media_derivation.local_speech.subprocess.run", timeout_asr)
     assert main() == 1
-    assert len(invocations) == 1 and invocations[0][1] == 300
+    assert child_started.read_text() == "started"
     status = json.loads((asset / "status.json").read_text())
     assert status["state"] == "derived"
     assert status["stages"]["web"] == "done"
