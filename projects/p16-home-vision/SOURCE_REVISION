@@ -1,4 +1,4 @@
 repository=tevriqorg/P16-Home-Vision
 branch=test/p16r2-vela-15d-soak
-commit=47e23d7a9312b9f848c67d94392e2ce8fb7958ae
+commit=bb0bf5af7f24ef3457ec82722db3e2b7a7a4a791
 copied_paths=implementation/tests/test_reconciliation_storage.py

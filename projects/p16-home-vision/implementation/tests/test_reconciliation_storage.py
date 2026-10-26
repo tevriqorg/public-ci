@@ -345,7 +345,8 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
         day = first_day + timedelta(days=offset)
         started = time.perf_counter()
         sampled = reconcile_storage_files(session)
-        elapsed = max(time.perf_counter() - started, 1e-9)
+        elapsed = time.perf_counter() - started
+        assert math.isfinite(elapsed) and elapsed > 0
         assert sampled.clean
         samples.append({"day": day.isoformat(), "elapsed_seconds": elapsed})
     p95 = sorted(sample["elapsed_seconds"] for sample in samples)[math.ceil(.95 * len(samples)) - 1]
@@ -397,15 +398,6 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
     ] == sources_before
     assert chain_path.read_bytes() == chain_snapshot
     assert sample_path.read_bytes() == sample_snapshot
-    assert [
-        (source.id, source.track_id, source.source_start, source.source_end,
-         source.duration_ms, source.source_state)
-        for source in session.query(SourceRecording).filter_by(nvr_id=nvr.id).order_by(
-            SourceRecording.id
-        ).all()
-    ] == sources_before
-    assert chain_path.read_bytes() == chain_snapshot
-    assert sample_path.read_bytes() == sample_snapshot
 
     mutated_path.write_bytes(original_bytes)
     restored = reconcile_storage_files(session)
@@ -418,3 +410,12 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
          asset.lifecycle_state, asset.verification_state)
         for asset in session.query(LocalAsset).filter_by(storage_volume_id=volume.id).all()
     ] == rows_before
+    assert [
+        (source.id, source.track_id, source.source_start, source.source_end,
+         source.duration_ms, source.source_state)
+        for source in session.query(SourceRecording).filter_by(nvr_id=nvr.id).order_by(
+            SourceRecording.id
+        ).all()
+    ] == sources_before
+    assert chain_path.read_bytes() == chain_snapshot
+    assert sample_path.read_bytes() == sample_snapshot
