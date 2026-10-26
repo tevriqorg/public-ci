@@ -103,7 +103,7 @@ def test_single_camera_failure_does_not_block_stable_peer(session, monkeypatch):
     from datetime import datetime, timedelta, timezone
     from pydantic import SecretStr
     from sqlalchemy import select
-    from app.models import NvrDevice, CameraTrack, ArchiveJob
+    from app.models import NvrDevice, CameraTrack, ArchiveJob, ScanRun
     from app.infra.nvr.hikvision import DiscoveredSegment, NvrProtocolError
     from scripts import scan_nvr
 
@@ -119,11 +119,13 @@ def test_single_camera_failure_does_not_block_stable_peer(session, monkeypatch):
     settings = SimpleNamespace(nvr_base_url="http://127.0.0.1", nvr_username="fixture",
         nvr_password=SecretStr("fixture"), nvr_scan_min_date=None, nvr_tracks=None,
         nvr_id=nvr.id, archive_auto_enqueue=True, nvr_timezone_verified=True)
+    searched_tracks = []
     class Searcher:
         def search_history(self, xml):
             import xml.etree.ElementTree as ET
             root = ET.fromstring(xml)
             track = next(e.text for e in root.iter() if e.tag.rsplit("}",1)[-1]=="trackID")
+            searched_tracks.append(track)
             if track == "102":
                 raise NvrProtocolError("NVR_HTTP_ERROR")
             return [DiscoveredSegment("101", start, start+timedelta(minutes=3), 180000,
@@ -133,6 +135,19 @@ def test_single_camera_failure_does_not_block_stable_peer(session, monkeypatch):
     monkeypatch.setattr(scan_nvr, "HikvisionIsapiClient", lambda **kw:nullcontext(Searcher()))
     for _ in range(2):
         assert scan_nvr.scan_once(start_day=day, end_day=day) == 1
+    assert searched_tracks.count("101") == 2
+    assert searched_tracks.count("102") == 2
+    scan_runs = list(session.scalars(
+        select(ScanRun).where(ScanRun.nvr_id == nvr.id)
+    ))
+    outcomes = {
+        track: [(run.state, run.error_code) for run in scan_runs if run.track_id == track]
+        for track in ("101", "102")
+    }
+    assert len(outcomes["101"]) == 2
+    assert all(state == "success" and error is None for state, error in outcomes["101"])
+    assert len(outcomes["102"]) == 2
+    assert all(state == "failed" and error for state, error in outcomes["102"])
     jobs = list(session.scalars(select(ArchiveJob)))
     assert len(jobs) == 1
     assert jobs[0].state == "queued"
