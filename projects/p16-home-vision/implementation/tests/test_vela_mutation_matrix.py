@@ -217,49 +217,120 @@ def test_s032_fifteen_day_history_is_immutable_across_recovery_and_restart(tmp_p
     assert p95 == pytest.approx(1.14)
 
 
+def _seed_s034_recording(session, *, suffix, track_id, observed_at, source_start, source_end):
+    nvr = NvrDevice(id=f"s034-{suffix}-nvr", name="S034 synthetic", host="127.0.0.1",
+                    timezone="Asia/Singapore")
+    session.add(nvr)
+    session.flush()
+    camera = CameraTrack(id=f"s034-{suffix}-camera", nvr_id=nvr.id, track_id=track_id,
+                         camera_name="S034 synthetic")
+    session.add(camera)
+    session.flush()
+    for index, completed in enumerate((
+        observed_at.astimezone(timezone.utc) - timedelta(minutes=2),
+        observed_at.astimezone(timezone.utc) - timedelta(minutes=1),
+    ), start=1):
+        session.add(ScanRun(
+            id=f"s034-{suffix}-scan-{index}", nvr_id=nvr.id, track_id=camera.track_id,
+            query_start=source_start - timedelta(days=1),
+            query_end=source_start + timedelta(days=1), state="success",
+            result_count=1, response_hash=f"s034-{suffix}-stable",
+            started_at=completed - timedelta(seconds=10), completed_at=completed,
+        ))
+    session.flush()
+    source = SourceRecording(
+        id=f"s034-{suffix}-source", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=source_start, source_end=source_end, duration_ms=60_000,
+        locator_fingerprint=f"synthetic-s034-{suffix}",
+        first_scan_id=f"s034-{suffix}-scan-1", last_scan_id=f"s034-{suffix}-scan-2",
+    )
+    session.add(source)
+    session.flush()
+    return nvr, camera, source
+
+
 def test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle(session):
-    """Kill UTC-midnight mutation and verify the persisted local-date NVR floor."""
+    """Execute UTC-midnight mutants through enqueue and verify the scan floor."""
     from datetime import date
     from app.domain.nvr_scan import scan_camera_range
-    from app.models import CameraTrack, NvrDevice, ScanRun
 
     singapore = ZoneInfo("Asia/Singapore")
     before_midnight = datetime(2026, 10, 26, 23, 59, tzinfo=singapore)
     at_midnight = datetime(2026, 10, 27, 0, 0, tzinfo=singapore)
+    after_midnight = datetime(2026, 10, 27, 0, 3, tzinfo=singapore)
     expected_before = datetime(2026, 10, 25, 16, 0, tzinfo=timezone.utc)
     expected_after = datetime(2026, 10, 26, 16, 0, tzinfo=timezone.utc)
     assert closed_day_cutoff_utc(now=before_midnight, timezone_name="Asia/Singapore") == expected_before
     assert closed_day_cutoff_utc(now=at_midnight, timezone_name="Asia/Singapore") == expected_after
 
-    # Mutation: taking UTC date midnight instead of configured-local midnight.
-    wrong_before = datetime.combine(before_midnight.astimezone(timezone.utc).date(),
-                                    time.min, tzinfo=timezone.utc)
-    wrong_after = datetime.combine(at_midnight.astimezone(timezone.utc).date(),
-                                   time.min, tzinfo=timezone.utc)
-    before_gap_source_end = datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc)
-    after_gap_source_end = datetime(2026, 10, 26, 8, 0, tzinfo=timezone.utc)
-    assert (before_gap_source_end <= wrong_before) != (before_gap_source_end <= expected_before)
-    assert (after_gap_source_end <= wrong_after) != (after_gap_source_end <= expected_after)
+    # A UTC-date-midnight mutation wrongly includes a still-growing local-day
+    # recording immediately before Singapore midnight.
+    nvr, _, source = _seed_s034_recording(
+        session, suffix="before", track_id="101", observed_at=before_midnight,
+        source_start=datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc),
+        source_end=datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc),
+    )
+    utc_midnight_mutant = lambda *, now, timezone_name: datetime.combine(
+        now.astimezone(timezone.utc).date(), time.min, tzinfo=timezone.utc
+    )
+    with patch("app.domain.auto_archive.closed_day_cutoff_utc", utc_midnight_mutant):
+        mutant = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=before_midnight,
+                                             enabled=True, timezone_verified=True)
+        session.flush()
+        assert mutant.cutoff_utc == datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)
+        assert mutant.eligible_count == 1
+        assert len(list(session.scalars(select(ArchiveJob)))) == 1
+        assert source.source_end > expected_before  # independent local-calendar oracle kills it
 
-    nvr = NvrDevice(id="s034-nvr", name="S034 synthetic", host="127.0.0.1",
-                    timezone="Asia/Singapore")
-    session.add(nvr)
+    session.rollback()
+    nvr, _, _ = _seed_s034_recording(
+        session, suffix="before", track_id="101", observed_at=before_midnight,
+        source_start=datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc),
+        source_end=datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc),
+    )
+    actual = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=before_midnight,
+                                         enabled=True, timezone_verified=True)
     session.flush()
-    camera = CameraTrack(id="s034-camera", nvr_id=nvr.id, track_id="101",
-                         camera_name="S034 synthetic")
-    session.add(camera)
-    session.flush()
+    assert actual.cutoff_utc == expected_before
+    assert actual.eligible_count == 0
+    assert list(session.scalars(select(ArchiveJob))) == []
 
-    class EmptySearcher:
-        def search_history(self, _request):
-            return []
+    # Shortly after local midnight the same UTC-date mutant wrongly excludes
+    # a closed source; stable scans are post-cutoff so eligibility is decisive.
+    session.rollback()
+    nvr, camera, source = _seed_s034_recording(
+        session, suffix="after", track_id="102", observed_at=after_midnight,
+        source_start=datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc),
+        source_end=datetime(2026, 10, 26, 8, 0, tzinfo=timezone.utc),
+    )
+    with patch("app.domain.auto_archive.closed_day_cutoff_utc", utc_midnight_mutant):
+        mutant = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=after_midnight,
+                                             enabled=True, timezone_verified=True)
+        session.flush()
+        assert mutant.cutoff_utc == datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)
+        assert mutant.eligible_count == 0
+        assert list(session.scalars(select(ArchiveJob))) == []
+        assert source.source_end <= expected_after  # independent local-calendar oracle detects omission
+
+    session.rollback()
+    nvr, camera, _ = _seed_s034_recording(
+        session, suffix="after", track_id="102", observed_at=after_midnight,
+        source_start=datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc),
+        source_end=datetime(2026, 10, 26, 8, 0, tzinfo=timezone.utc),
+    )
+    actual = enqueue_closed_day_backlog(session, nvr_id=nvr.id, now=after_midnight,
+                                         enabled=True, timezone_verified=True)
+    session.flush()
+    assert actual.cutoff_utc == expected_after
+    assert actual.eligible_count == 1
+    assert len(list(session.scalars(select(ArchiveJob)))) == 1
 
     result = scan_camera_range(
         session, nvr=nvr, camera=camera,
         query_start=datetime(2026, 10, 25, 0, 0, tzinfo=timezone.utc),
         query_end=datetime(2026, 10, 27, 16, 0, tzinfo=timezone.utc),
-        searcher=EmptySearcher(), scan_id="s034-floor",
-        scan_min_date=date(2026, 10, 26),
+        searcher=type("EmptySearcher", (), {"search_history": lambda self, _request: []})(),
+        scan_id="s034-floor", scan_min_date=date(2026, 10, 26),
     )
     scan = session.get(ScanRun, result.scan_id)
     assert scan is not None
