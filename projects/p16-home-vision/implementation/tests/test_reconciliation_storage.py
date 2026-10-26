@@ -13,6 +13,8 @@ from scripts.p16_soak import enqueue_failures
 from scripts.vela_soak_runtime import EvidenceStore, digest, record_daily_cycle
 import json
 import sqlite3
+import math
+import time
 
 
 def test_s012_reports_storage_ledger_mismatches_without_mutating_rows_or_files(
@@ -201,6 +203,14 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
         for asset in session.query(LocalAsset).filter_by(storage_volume_id=volume.id).all()
     ]
     assert len(rows_before) == 15
+    sources_before = [
+        (source.id, source.track_id, source.source_start, source.source_end,
+         source.duration_ms, source.source_state)
+        for source in session.query(SourceRecording).filter_by(nvr_id=nvr.id).order_by(
+            SourceRecording.id
+        ).all()
+    ]
+    assert len(sources_before) == 15
     for path, payload in snapshots.items():
         assert hashlib.sha256(path.read_bytes()).hexdigest() == expected_hashes[path]
 
@@ -286,6 +296,75 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
         row for row in evidence_rows if row["status"] == "FAIL"
     ))
 
+    # Persist and independently recompute a date-indexed hash chain over every
+    # immutable run, including the old failure and its later source revision.
+    previous = None
+    chain_rows = []
+    for record in sorted(persisted, key=lambda row: (
+        row["history_day"], row["timestamp_utc"], row["run_id"]
+    )):
+        entry = {
+            "history_day": record["history_day"], "run_id": record["run_id"],
+            "source_sha": record["source_sha"], "evidence_sha256": digest(record),
+            "previous_sha256": previous,
+        }
+        chain_sha = digest(entry)
+        chain_rows.append({**entry, "chain_sha256": chain_sha})
+        previous = chain_sha
+    chain_path = state / "history-chain.jsonl"
+    with chain_path.open("xb") as chain_file:
+        chain_file.write(b"".join(
+            json.dumps(row, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+            for row in chain_rows
+        ))
+        chain_file.flush()
+    chain_snapshot = chain_path.read_bytes()
+    previous = None
+    verified_chain = []
+    for line in chain_snapshot.splitlines():
+        row = json.loads(line)
+        chain_sha = row.pop("chain_sha256")
+        assert row["previous_sha256"] == previous
+        assert chain_sha == digest(row)
+        assert row["evidence_sha256"] == next(
+            digest(record) for record in persisted if record["run_id"] == row["run_id"]
+        )
+        assert row["source_sha"] == next(
+            record["source_sha"] for record in persisted
+            if record["run_id"] == row["run_id"]
+        )
+        previous = chain_sha
+        verified_chain.append(chain_sha)
+    assert len(verified_chain) == 16
+    assert verified_chain == [row["chain_sha256"] for row in chain_rows]
+
+    # Sample a full-history reconciliation for each of the 15 calendar dates;
+    # compute p95 from observed monotonic timings and keep the sample immutable.
+    samples = []
+    for offset in range(15):
+        day = first_day + timedelta(days=offset)
+        started = time.perf_counter()
+        sampled = reconcile_storage_files(session)
+        elapsed = max(time.perf_counter() - started, 1e-9)
+        assert sampled.clean
+        samples.append({"day": day.isoformat(), "elapsed_seconds": elapsed})
+    p95 = sorted(sample["elapsed_seconds"] for sample in samples)[math.ceil(.95 * len(samples)) - 1]
+    assert len(samples) == 15 and math.isfinite(p95) and p95 > 0
+    sample_path = state / "history-p95.json"
+    sample_snapshot = json.dumps(
+        {"samples": samples, "p95_seconds": p95}, sort_keys=True, separators=(",", ":")
+    ).encode()
+    with sample_path.open("xb") as sample_file:
+        sample_file.write(sample_snapshot)
+        sample_file.flush()
+    sample_record = json.loads(sample_path.read_bytes())
+    assert [sample["day"] for sample in sample_record["samples"]] == [
+        (first_day + timedelta(days=offset)).isoformat() for offset in range(15)
+    ]
+    assert sample_record["p95_seconds"] == p95
+    assert all(math.isfinite(sample["elapsed_seconds"]) and sample["elapsed_seconds"] > 0
+               for sample in sample_record["samples"])
+
     # Mutate a past file without changing size; an independent bytes-based SHA
     # oracle must identify exactly the affected historical ledger row.
     mutated_path = sorted(snapshots)[3]
@@ -309,6 +388,24 @@ def test_s032_reconciles_fifteen_day_media_evidence_and_source_history(session, 
          asset.lifecycle_state, asset.verification_state)
         for asset in session.query(LocalAsset).filter_by(storage_volume_id=volume.id).all()
     ] == rows_before
+    assert [
+        (source.id, source.track_id, source.source_start, source.source_end,
+         source.duration_ms, source.source_state)
+        for source in session.query(SourceRecording).filter_by(nvr_id=nvr.id).order_by(
+            SourceRecording.id
+        ).all()
+    ] == sources_before
+    assert chain_path.read_bytes() == chain_snapshot
+    assert sample_path.read_bytes() == sample_snapshot
+    assert [
+        (source.id, source.track_id, source.source_start, source.source_end,
+         source.duration_ms, source.source_state)
+        for source in session.query(SourceRecording).filter_by(nvr_id=nvr.id).order_by(
+            SourceRecording.id
+        ).all()
+    ] == sources_before
+    assert chain_path.read_bytes() == chain_snapshot
+    assert sample_path.read_bytes() == sample_snapshot
 
     mutated_path.write_bytes(original_bytes)
     restored = reconcile_storage_files(session)
