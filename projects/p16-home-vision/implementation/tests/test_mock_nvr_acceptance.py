@@ -208,6 +208,78 @@ def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_p
     assert all("fixture-password" not in (event.payload_redacted or "") for event in session.query(AuditEvent).all())
 
 
+def test_s005_http_453_is_retryable_only_after_explicit_backoff(session, tmp_path, monkeypatch):
+    """Inject one real mock-NVR 453 response and verify bounded archive recovery."""
+    payload = _synthetic_video(tmp_path / "s005-source.mp4")
+    now = datetime.now(timezone.utc)
+    start = datetime.combine(now.date() - timedelta(days=2), time(1), tzinfo=timezone.utc)
+    end = start + timedelta(seconds=3)
+    nvr = NvrDevice(id="s005-nvr", name="S005 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s005-camera", nvr_id=nvr.id, track_id="105", camera_name="Synthetic")
+    volume_root = tmp_path / "s005-volume"
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.add(StorageVolume(
+        id="s005-volume", node_id="fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    ))
+    session.flush()
+    recording = MockRecording(camera.track_id, start, end, payload)
+
+    with MockHikvisionNvr([recording], download_statuses=[453]) as mock_nvr:
+        with _client(mock_nvr) as client:
+            scan = scan_camera_range(
+                session, nvr=nvr, camera=camera,
+                query_start=start - timedelta(hours=1),
+                query_end=end + timedelta(hours=1), searcher=client,
+                scan_id="s005-scan",
+            )
+            assert (scan.state, scan.discovered_count) == ("success", 1)
+            session.commit()
+            source = session.scalar(select(SourceRecording).where(
+                SourceRecording.nvr_id == nvr.id,
+                SourceRecording.track_id == camera.track_id,
+            ))
+            assert source is not None
+            queued = enqueue_archive_jobs(session, [source.id])
+            assert len(queued.queued) == 1
+            session.commit()
+            job = session.scalar(select(ArchiveJob).where(
+                ArchiveJob.source_recording_id == source.id,
+            ))
+            monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+
+            assert archive_worker.process_one(
+                session, client, probe=FfprobeMediaProbe(), worker_id="s005-worker",
+            ) == job.id
+            session.refresh(job)
+            # Independent contract oracle: the first response is a throttle,
+            # not a successful payload and not an automatic tight-loop retry.
+            assert (job.state, job.error_code) == ("failed", "NVR_BANDWIDTH_LIMIT")
+            assert session.query(LocalAsset).filter_by(source_recording_id=source.id).count() == 0
+            final_path = volume_root / "recordings" / start.strftime("%Y/%m/%d") / "camera-105" / f"{start:%H%M%S}-{source.id}.mp4"
+            assert not final_path.exists()
+
+            assert retry_due_archive_jobs(
+                session, now=datetime.now(timezone.utc) + timedelta(hours=1),
+            ) == 1
+            session.commit()
+            assert archive_worker.process_one(
+                session, client, probe=FfprobeMediaProbe(), worker_id="s005-worker",
+            ) == job.id
+            session.refresh(job)
+            asset = session.scalar(select(LocalAsset).where(
+                LocalAsset.source_recording_id == source.id,
+            ))
+            assert job.state == "completed"
+            assert asset is not None and asset.verification_state == "verified"
+            assert asset.sha256 == hashlib.sha256(payload).hexdigest()
+            assert (volume_root / asset.relative_path).read_bytes() == payload
+            assert session.query(LocalAsset).filter_by(source_recording_id=source.id).count() == 1
+            assert mock_nvr.download_count == 2
+
+
 def test_two_workers_racing_one_source_create_one_verified_asset(session, tmp_path, monkeypatch):
     """S017 injects two claim readers before either can promote the same job."""
     nvr = NvrDevice(id="nvr-s017", name="S017 synthetic", host="fixture", timezone="UTC")
