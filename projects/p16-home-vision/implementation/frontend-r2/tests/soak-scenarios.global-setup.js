@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,6 +20,13 @@ export default async function runRegisteredSoakScenarios() {
   const sourceSha = sourceMarker.match(/^commit=([0-9a-f]{40})$/m)?.[1]
   if (!sourceSha) throw new Error('P16_SOURCE_REVISION_MARKER_INVALID')
 
+  const dirtyPaths = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+    cwd: projectRoot,
+  }).toString('utf8').split('\0').filter(Boolean)
+    .map((entry) => entry.slice(3))
+    .filter((path) => path.startsWith('implementation/'))
+  console.log(`[P16_SOURCE_STATUS] ${JSON.stringify(dirtyPaths.slice(0, 30))}`)
+
   const stateDir = resolve(implementationDir, '.tmp', 'hosted-browser-scenarios')
   for (const scenarioId of ['S024', 'S025']) {
     const execution = spawnSync('python', [
@@ -30,7 +37,11 @@ export default async function runRegisteredSoakScenarios() {
       cwd: projectRoot,
       encoding: 'utf8',
       timeout: 240_000,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        P16_SOAK_WRAPPER_CHILD: '1',
+      },
     })
     if (execution.error || execution.status !== 0) {
       const detail = execution.error?.code || execution.stderr?.trim() || `EXIT_${execution.status}`
