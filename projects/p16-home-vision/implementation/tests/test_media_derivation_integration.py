@@ -64,6 +64,21 @@ def _make_hevc_sample(path: Path, *, required: bool = False, duration_seconds: f
         pytest.skip(detail)
 
 
+def _make_h264_aac_mp4_sample(path: Path) -> None:
+    completed = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=12:duration=2.5",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000:duration=2.5",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "64k", "-shortest", "-movflags", "+faststart",
+            str(path),
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=120,
+    )
+    if completed.returncode != 0:
+        pytest.fail(f"S019 cannot create required H264/AAC MP4 fixture: {completed.stderr[-500:]}")
+
+
 def _probe(path: Path) -> dict:
     completed = subprocess.run(
         ["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(path)],
@@ -73,6 +88,30 @@ def _probe(path: Path) -> dict:
         check=True,
     )
     return json.loads(completed.stdout)
+
+
+def _video_packet_pts(path: Path) -> list[float]:
+    completed = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets",
+         "-show_entries", "packet=pts_time", "-of", "json", str(path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
+    )
+    return [float(packet["pts_time"]) for packet in json.loads(completed.stdout)["packets"]
+            if "pts_time" in packet]
+
+
+def _assert_derivation_pts_against_source(raw: Path, web: Path, manifest: Path) -> None:
+    """Use ffprobe packet timestamps as an oracle independent of showinfo output."""
+    source_pts = _video_packet_pts(raw)
+    output_pts = _video_packet_pts(web)
+    assert len(source_pts) == len(output_pts) >= 2
+    assert all(abs(source - output) <= 0.02 for source, output in zip(source_pts, output_pts))
+    rows = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+    assert rows and rows[0]["source_pts_seconds"] >= 0
+    assert rows[-1]["source_pts_seconds"] <= source_pts[-1] + 0.02
+    assert all(any(abs(row["source_pts_seconds"] - pts) <= 0.02 for pts in source_pts)
+               for row in rows)
 
 
 def _assert_real_hevc_derivation(tmp_path: Path, *, require_encoder: bool):
@@ -127,6 +166,41 @@ def test_component_hevc_pcm_stream_copy_preserves_pts(tmp_path: Path):
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S019 requires ffmpeg/ffprobe; scenario cannot be a skip")
     _assert_real_hevc_derivation(tmp_path, require_encoder=True)
+
+
+def test_s019_multi_container_codec_derivation_preserves_source_pts(tmp_path: Path):
+    """Exercise MKV/HEVC/PCM and MP4/H264/AAC through the production pipeline."""
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.fail("S019 requires ffmpeg/ffprobe; scenario cannot be a skip")
+
+    hevc_raw = tmp_path / "source-hevc-pcm.mkv"
+    _make_hevc_sample(hevc_raw, required=True)
+    h264_raw = tmp_path / "source-h264-aac.mp4"
+    _make_h264_aac_mp4_sample(h264_raw)
+
+    cases = ((hevc_raw, "hevc", "aac"), (h264_raw, "h264", "aac"))
+    for index, (raw, expected_video, expected_audio) in enumerate(cases):
+        source = probe_source(raw)
+        assert source.video_codec == expected_video
+        assert source.has_audio is True
+        raw_hash = hashlib.sha256(raw.read_bytes()).hexdigest()
+        paths = DerivationPaths(raw=raw, root=tmp_path / f"asset-{index}")
+        result = run_derivation(
+            paths, DerivationPlan(has_audio=True), source_start_epoch=1_700_000_000.0 + index,
+        )
+
+        assert result["raw_deleted"] is False
+        assert hashlib.sha256(raw.read_bytes()).hexdigest() == raw_hash
+        assert paths.web_final.is_file() and paths.audio_final.is_file()
+        assert paths.frame_manifest_final.is_file()
+        streams = _probe(paths.web_final)["streams"]
+        video = next(stream for stream in streams if stream["codec_type"] == "video")
+        audio = next(stream for stream in streams if stream["codec_type"] == "audio")
+        assert video["codec_name"] == expected_video
+        assert audio["codec_name"] == expected_audio
+        if expected_video == "hevc":
+            assert video.get("codec_tag_string") == "hvc1"
+        _assert_derivation_pts_against_source(raw, paths.web_final, paths.frame_manifest_final)
 
 
 def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch, capsys):
