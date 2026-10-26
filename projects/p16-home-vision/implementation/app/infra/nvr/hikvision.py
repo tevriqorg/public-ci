@@ -78,6 +78,19 @@ def parse_search_response(xml_payload: bytes | str) -> list[DiscoveredSegment]:
     except ET.ParseError as exc:
         raise NvrProtocolError("NVR_SEARCH_XML_INVALID") from exc
 
+    # Some Hikvision firmware returns an XML error document with HTTP 200. An
+    # empty parse result must not be recorded as a successful empty scan.
+    response_status = next(
+        (item for item in root.iter() if _local_name(item.tag) == "ResponseStatus"),
+        None,
+    )
+    if response_status is not None:
+        status_text = _first_text(response_status, "responseStatusStrg")
+        status_code = _first_text(response_status, "statusCode")
+        if ((status_text is not None and status_text.upper() not in {"OK", "SUCCESS"})
+                or (status_code is not None and status_code not in {"1", "200"})):
+            raise NvrProtocolError("NVR_SEARCH_REJECTED")
+
     segments: list[DiscoveredSegment] = []
     for item in root.iter():
         if _local_name(item.tag) not in {"searchMatchItem", "matchItem"}:

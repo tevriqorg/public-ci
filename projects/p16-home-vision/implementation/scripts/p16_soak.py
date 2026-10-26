@@ -140,6 +140,9 @@ def registry():
         'S031': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_mutant_is_killed'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S033': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 

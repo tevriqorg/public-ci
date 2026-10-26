@@ -3,9 +3,15 @@ from datetime import datetime, time, timedelta, timezone
 from unittest.mock import patch
 
 from sqlalchemy import select
+import pytest
 
 from app.domain.auto_archive import closed_day_cutoff_utc, enqueue_closed_day_backlog
+from app.domain.archive_pipeline import ArchiveValidationError, verify_part
+from app.infra.media.ffprobe import FfprobeMediaProbe
+from app.infra.nvr.hikvision import HikvisionIsapiClient
 from app.models import ArchiveJob, CameraTrack, NvrDevice, ScanRun, SourceRecording
+from app.domain.nvr_scan import scan_camera_range
+from app.models import LocalAsset
 
 
 def _seed_current_day_source(session, day, run_at):
@@ -84,3 +90,50 @@ def test_s031_current_day_enqueue_mutant_is_killed(session):
     assert actual_result.cutoff_utc == expected_cutoff
     assert actual_result.eligible_count == 0
     assert actual_jobs == []
+
+
+def test_s033_http_200_error_xml_and_invalid_video_are_rejected(session, tmp_path, monkeypatch):
+    """Exercise both malformed-success boundaries without creating canonical rows."""
+    day = datetime.now(timezone.utc).date() - timedelta(days=1)
+    start = datetime.combine(day, time(1), tzinfo=timezone.utc)
+    nvr = NvrDevice(id="s033-nvr", name="S033 synthetic", host="127.0.0.1", timezone="UTC")
+    session.add(nvr)
+    session.flush()
+    camera = CameraTrack(id="s033-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S033 synthetic")
+    session.add(camera)
+    session.flush()
+
+    error_xml = b'''<?xml version="1.0"?><ResponseStatus>
+      <requestURL>/ISAPI/ContentMgmt/search</requestURL><statusCode>4</statusCode>
+      <statusString>Invalid Operation</statusString><responseStatusStrg>FAIL</responseStatusStrg>
+    </ResponseStatus>'''
+
+    class Http200Error:
+        status_code = 200
+        content = error_xml
+
+    class HttpClient:
+        def post(self, *args, **kwargs):
+            return Http200Error()
+
+    client = HikvisionIsapiClient.__new__(HikvisionIsapiClient)
+    client._base_url = "http://127.0.0.1/"
+    client._client = HttpClient()
+    client._download_method = "POST"
+    result = scan_camera_range(
+        session, nvr=nvr, camera=camera, query_start=start,
+        query_end=start + timedelta(days=1), searcher=client,
+    )
+    session.flush()
+    assert result.state == "failed"
+    assert result.error_code == "NVR_SEARCH_REJECTED"
+    assert list(session.scalars(select(SourceRecording))) == []
+
+    invalid_part = tmp_path / "invalid-video.mp4"
+    invalid_part.write_bytes(b"synthetic non-video payload\n" * 256)
+    with pytest.raises(ArchiveValidationError) as rejected:
+        verify_part(invalid_part, expected_duration_ms=180_000,
+                    probe=FfprobeMediaProbe())
+    assert rejected.value.code == "MEDIA_PROBE_FAILED"
+    assert list(session.scalars(select(LocalAsset))) == []
