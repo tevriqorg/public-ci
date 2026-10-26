@@ -14,8 +14,8 @@ import subprocess
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from p16_soak import ROOT, enqueue_failures, main, registry, verify_source_revision
-from vela_soak_runtime import EvidenceStore, command_handler, run_scenario
+from p16_soak import enqueue_failures, main, registry, verify_source_revision
+from vela_soak_runtime import command_handler
 
 class RepairQueueTests(unittest.TestCase):
     def test_source_revision_requires_matching_clean_code_tree(self):
@@ -432,27 +432,15 @@ class RepairQueueTests(unittest.TestCase):
     def test_s030_learning_loop_is_not_promoted_by_local_ledger_test(self):
         self.assertNotIn('S030', registry())
 
-    def test_s032_component_is_not_promoted_to_complete_scenario(self):
-        handlers = registry()
-        self.assertNotIn('S032', handlers)
-        catalog = json.loads((ROOT / 'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json').read_text())
-        with tempfile.TemporaryDirectory() as d:
-            store = EvidenceStore(Path(d))
-            result = run_scenario(
-                catalog, 'S032', handlers, store,
-                source_sha='a' * 40, guard=lambda: None,
-            )
-            self.assertFalse(result['complete'])
-            self.assertEqual(result['results'][0]['status'], 'BLOCKED')
-            self.assertEqual(result['results'][0]['reason'], 'SCENARIO_NOT_IMPLEMENTED')
-            self.assertEqual(store.records(), result['results'])
+    def test_s032_full_history_drift_scenario_is_registered(self):
+        self.assertIn('S032', registry())
 
     def test_s036_post_archive_failure_matrix_is_registered(self):
         self.assertIn('S036', registry())
 
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S032'}
+        blocked = {'S022', 'S026', 'S028', 'S029', 'S030'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )
