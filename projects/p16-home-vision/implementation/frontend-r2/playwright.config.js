@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
+  globalSetup: './tests/soak-scenarios.global-setup.js',
   testDir: './tests',
   testMatch: 'browser.acceptance.spec.js',
   timeout: 30_000,
