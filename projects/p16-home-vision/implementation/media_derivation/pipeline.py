@@ -84,6 +84,10 @@ def build_ffmpeg_command(
         "-hide_banner",
         "-nostdin",
         "-y",
+        # Keep filter pools within the worker's bounded memory envelope instead
+        # of sizing them from the host CPU count for the parallel frame branch.
+        "-filter_threads",
+        "1",
         "-i",
         str(paths.raw),
         # Web media branch: packet copy for video, AAC only for browser audio.
