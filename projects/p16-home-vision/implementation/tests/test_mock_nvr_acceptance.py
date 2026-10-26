@@ -898,8 +898,11 @@ def test_s003_three_day_two_camera_backfill_has_no_archive_omissions(session, tm
     assert mock_nvr.download_count == 6
 
 
-def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session, tmp_path, monkeypatch):
-    """S006: reject HTTP-200 XML payload, preserve the partial, then recover safely."""
+@pytest.mark.parametrize("fault", ["xml-error", "truncated-stream", "corrupt-media"])
+def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(
+    session, tmp_path, monkeypatch, fault,
+):
+    """S006: reject XML, truncated, and corrupt downloads before safe recovery."""
     payload = _synthetic_video(tmp_path / "s006-synthetic.mp4")
     now = datetime.now(timezone.utc)
     today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
@@ -920,7 +923,9 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session,
 
     with MockHikvisionNvr(
             [MockRecording("101", source_start, source_end, payload)],
-            error_payload_once=True) as mock_nvr:
+            error_payload_once=fault == "xml-error",
+            truncate_download_bytes_once=128 if fault == "truncated-stream" else None,
+            corrupt_media_once=fault == "corrupt-media") as mock_nvr:
         with _client(mock_nvr) as client:
             for scan_id in ("s006-scan-1", "s006-scan-2"):
                 scanned = scan_camera_range(
@@ -944,12 +949,23 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session,
             assert archive_worker.process_one(
                 session, client, probe=FfprobeMediaProbe(), worker_id="s006-worker") == job.id
             session.refresh(job)
-            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
+            expected_error = {
+                "xml-error": "DOWNLOAD_ERROR_PAYLOAD",
+                "truncated-stream": "NVR_DOWNLOAD_FAILED",
+                "corrupt-media": "MEDIA_PROBE_FAILED",
+            }[fault]
+            assert (job.state, job.error_code) == ("failed", expected_error)
             assert session.scalar(select(LocalAsset).where(
                 LocalAsset.source_recording_id == job.source_recording_id)) is None
             quarantined = list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))
             assert len(quarantined) == 1
-            assert quarantined[0].read_bytes().startswith(b"<?xml")
+            quarantined_bytes = quarantined[0].read_bytes()
+            if fault == "xml-error":
+                assert quarantined_bytes.startswith(b"<?xml")
+            elif fault == "truncated-stream":
+                assert quarantined_bytes == payload[:128]
+            else:
+                assert quarantined_bytes.startswith(b"not-a-video")
             assert session.query(AuditEvent).filter_by(
                 event_type="archive_partial_quarantined", entity_id=job.id).count() == 1
 
@@ -963,7 +979,7 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session,
             session.refresh(retry_job)
             session.refresh(job)
             assert retry_job.state == "completed"
-            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
+            assert (job.state, job.error_code) == ("failed", expected_error)
 
     asset = session.scalar(select(LocalAsset).where(
         LocalAsset.source_recording_id == retry_job.source_recording_id))
