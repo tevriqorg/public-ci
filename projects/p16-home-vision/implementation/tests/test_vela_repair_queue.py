@@ -81,7 +81,9 @@ class RepairQueueTests(unittest.TestCase):
             code.write_text('print("fixture")\n')
             ignore=root/'implementation'/'.gitignore'
             ignore.write_text(
-                '.tmp/\nfrontend-r2/node_modules/\nfrontend-r2/package-lock.json\n'
+                '.tmp/\n__pycache__/\n*.py[cod]\n.pytest_cache/\n'
+                '*.db\n*.db-*\n'
+                'frontend-r2/node_modules/\nfrontend-r2/package-lock.json\n'
                 'frontend-r2/*.tsbuildinfo\n'
             )
             subprocess.run(['git','init','-q'],cwd=root,check=True)
@@ -96,6 +98,10 @@ class RepairQueueTests(unittest.TestCase):
                 root/'implementation'/'frontend-r2'/'node_modules'/'vite'/'index.js',
                 root/'implementation'/'frontend-r2'/'package-lock.json',
                 root/'implementation'/'frontend-r2'/'tsconfig.app.tsbuildinfo',
+                root/'implementation'/'app'/'__pycache__'/'config.cpython-312.pyc',
+                root/'implementation'/'.pytest_cache'/'v'/'cache'/'nodeids',
+                root/'implementation'/'home-vision.db',
+                root/'implementation'/'home-vision.db-wal',
             ]
             for output in outputs:
                 output.parent.mkdir(parents=True,exist_ok=True)
