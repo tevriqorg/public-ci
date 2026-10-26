@@ -123,13 +123,13 @@ def test_real_derivation_keeps_raw_and_outputs_web_frames_audio(tmp_path: Path):
     _assert_real_hevc_derivation(tmp_path, require_encoder=False)
 
 
-def test_s019_required_hevc_pcm_stream_copy_preserves_pts(tmp_path: Path):
+def test_component_hevc_pcm_stream_copy_preserves_pts(tmp_path: Path):
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S019 requires ffmpeg/ffprobe; scenario cannot be a skip")
     _assert_real_hevc_derivation(tmp_path, require_encoder=True)
 
 
-def test_s027_synthetic_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch, capsys):
+def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch, capsys):
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S027 requires ffmpeg/ffprobe; scenario cannot be a skip")
     raw = tmp_path / "source-synthetic.mkv"
@@ -173,7 +173,7 @@ def test_s027_synthetic_raw_retention_and_secret_redaction(tmp_path: Path, monke
     assert _files_containing(asset_root, canary) == []
 
 
-def test_s035_ten_minute_derivation_stays_within_time_memory_and_storage_bounds(tmp_path: Path):
+def test_component_ten_minute_derivation_stays_within_time_memory_and_storage_bounds(tmp_path: Path):
     """Run real derivation on bounded synthetic long media and check resource envelope."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S035 requires ffmpeg/ffprobe; scenario cannot be a skip")

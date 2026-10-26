@@ -302,7 +302,7 @@ def test_s033_http_200_error_xml_and_invalid_video_are_rejected(session, tmp_pat
     assert list(session.scalars(select(LocalAsset))) == []
 
 
-def test_s032_fifteen_day_history_is_immutable_across_recovery_and_restart(tmp_path):
+def test_component_daily_ledger_history_is_immutable_across_recovery_and_restart(tmp_path):
     """Reconcile synthetic daily rows and prove prior failure evidence cannot be rewritten."""
     singapore = ZoneInfo("Asia/Singapore")
     today = datetime.now(singapore).date()

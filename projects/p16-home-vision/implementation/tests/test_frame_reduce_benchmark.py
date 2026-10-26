@@ -33,7 +33,7 @@ def test_benchmark_rejects_selected_frame_with_forged_identity():
         benchmark_reducer(MutatingFrameReducer(), frames, (0.0,))
 
 
-def test_s022_variable_pts_static_and_motion_manifest_has_grounded_selection(tmp_path: Path):
+def test_component_variable_pts_static_and_motion_manifest_has_grounded_selection(tmp_path: Path):
     # Synthetic luminance labels represent long static spans and two motion
     # transitions. Deliberately unrelated frame indexes catch index/FPS timing.
     rows = [

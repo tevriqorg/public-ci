@@ -23,7 +23,7 @@ def record(**kw):
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_s028_outage_catchup_keeps_missed_days_and_rejects_second_writer(self):
+    def test_component_outage_catchup_keeps_missed_days_and_rejects_second_writer(self):
         with tempfile.TemporaryDirectory() as fresh:
             late_first = record_daily_cycle(
                 fresh, scheduled_start="2026-10-22", observed_day="2026-10-23",
@@ -56,7 +56,7 @@ class RuntimeTests(unittest.TestCase):
                     with cycle_lock(d):
                         pass
 
-    def test_s028_older_catchup_leaves_current_day_open_for_daily_run(self):
+    def test_component_older_catchup_leaves_current_day_open_for_daily_run(self):
         with tempfile.TemporaryDirectory() as d:
             catchup = record_daily_cycle(
                 d, scheduled_start="2026-10-22", observed_day="2026-10-23",
@@ -72,7 +72,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(daily["schedule"], catchup["schedule"] + [
                 ("2026-10-25", "PASS")])
 
-    def test_s030_bug_reproducer_recovery_and_adjacent_regression_are_immutable(self):
+    def test_component_daily_ledger_recovery_and_adjacent_regression_are_immutable(self):
         today = datetime.now(ZoneInfo("Asia/Singapore")).date()
         start = (today - timedelta(days=3)).isoformat()
         old_day = (today - timedelta(days=2)).isoformat()
