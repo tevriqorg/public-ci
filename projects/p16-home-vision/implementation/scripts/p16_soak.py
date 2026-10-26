@@ -243,6 +243,10 @@ def registry():
         'S026': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_repair_queue.py::RepairQueueTests::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S027': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_media_derivation_integration.py::test_s027_raw_retention_and_secret_redaction_include_git_content',
+            'tests/test_media_derivation_integration.py::test_s027_git_secret_oracle_canary_detects_worktree_index_history_and_untracked'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
         'S031': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_canary_rejects_cutoff_mutant',
             'tests/test_vela_mutation_matrix.py::test_s031_future_ending_video_canary_rejects_cutoff_mutant',
@@ -251,7 +255,7 @@ def registry():
             cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
         # real injection and independent oracles. S032's ledger test does not
-        # inspect canonical history; S022/027 component tests omit catalog
+        # inspect canonical history; S022 has no production reducer for its catalog
         # subcases, while S028/029/030/036 still lack their system-level or
         # multi-stage oracles. Component tests cannot turn broader scenarios green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',

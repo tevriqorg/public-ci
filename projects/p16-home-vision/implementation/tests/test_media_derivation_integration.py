@@ -22,6 +22,41 @@ def _files_containing(root: Path, token: bytes) -> list[str]:
             if path.is_file() and token in path.read_bytes()]
 
 
+def _git_contains_token(repo: Path, token: str) -> bool:
+    """Search committed, indexed, tracked-diff, and untracked Git content."""
+    for revision_args in (['HEAD'], ['--cached']):
+        result = subprocess.run(
+            ['git', 'grep', '--no-color', '-F', '-I', '-q', '-e', token, *revision_args],
+            cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if result.returncode == 0:
+            return True
+        if result.returncode != 1:
+            raise AssertionError(f'git grep failed: {result.stderr.decode(errors="replace")}')
+
+    history = subprocess.run(
+        ['git', 'log', '--all', '--format=%H', '-S', token, '--'], cwd=repo,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+    )
+    if history.stdout.strip():
+        return True
+
+    for args in (['diff', '--binary'], ['diff', '--cached', '--binary']):
+        result = subprocess.run(['git', *args], cwd=repo, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, check=True)
+        if token.encode() in result.stdout:
+            return True
+
+    listed = subprocess.run(
+        ['git', 'ls-files', '--others', '--exclude-standard', '-z'], cwd=repo,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+    )
+    for relative in listed.stdout.split(b'\0'):
+        if relative and token.encode() in (repo / relative.decode()).read_bytes():
+            return True
+    return False
+
+
 def _make_hevc_sample(path: Path, *, required: bool = False, duration_seconds: float = 2.4) -> None:
     completed = subprocess.run(
         [
@@ -203,7 +238,7 @@ def test_s019_multi_container_codec_derivation_preserves_source_pts(tmp_path: Pa
         _assert_derivation_pts_against_source(raw, paths.web_final, paths.frame_manifest_final)
 
 
-def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch, capsys):
+def test_s027_raw_retention_and_secret_redaction_include_git_content(tmp_path: Path, monkeypatch, capsys):
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S027 requires ffmpeg/ffprobe; scenario cannot be a skip")
     raw = tmp_path / "source-synthetic.mkv"
@@ -234,6 +269,8 @@ def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatc
     assert status["raw_deleted"] is False
     assert status["stages"]["raw"] == "done"
     assert _files_containing(asset_root, canary) == []
+    repo = Path(__file__).resolve().parents[2]
+    assert _git_contains_token(repo, canary.decode()) is False
 
     # Mutation canary: prove the independent persisted-file scanner detects an
     # accidental secret leak before trusting its clean result above.
@@ -245,6 +282,38 @@ def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatc
     finally:
         injected.unlink(missing_ok=True)
     assert _files_containing(asset_root, canary) == []
+
+
+def test_s027_git_secret_oracle_canary_detects_worktree_index_history_and_untracked(
+    tmp_path: Path,
+):
+    repo = tmp_path / 'synthetic-git-repo'
+    repo.mkdir()
+    subprocess.run(['git', 'init', '-q'], cwd=repo, check=True)
+    subprocess.run(['git', 'config', 'user.name', 'Synthetic Test'], cwd=repo, check=True)
+    subprocess.run(['git', 'config', 'user.email', 'synthetic@example.invalid'],
+                   cwd=repo, check=True)
+    tracked = repo / 'config.txt'
+    tracked.write_text('safe configuration\n', encoding='utf-8')
+    subprocess.run(['git', 'add', 'config.txt'], cwd=repo, check=True)
+    subprocess.run(['git', 'commit', '-qm', 'synthetic baseline'], cwd=repo, check=True)
+
+    canary = 'credential-' + secrets.token_hex(24)
+    assert _git_contains_token(repo, canary) is False
+    tracked.write_text(f'credential={canary}\n', encoding='utf-8')
+    assert _git_contains_token(repo, canary) is True  # unstaged tracked worktree
+    subprocess.run(['git', 'add', 'config.txt'], cwd=repo, check=True)
+    assert _git_contains_token(repo, canary) is True  # index
+    subprocess.run(['git', 'commit', '-qm', 'synthetic secret mutation'], cwd=repo, check=True)
+    assert _git_contains_token(repo, canary) is True  # committed tree
+
+    tracked.write_text('safe configuration again\n', encoding='utf-8')
+    subprocess.run(['git', 'add', 'config.txt'], cwd=repo, check=True)
+    subprocess.run(['git', 'commit', '-qm', 'synthetic secret removal'], cwd=repo, check=True)
+    assert _git_contains_token(repo, canary) is True  # reachable commit history
+    untracked_canary = 'untracked-' + secrets.token_hex(24)
+    (repo / 'untracked.txt').write_text(untracked_canary, encoding='utf-8')
+    assert _git_contains_token(repo, untracked_canary) is True  # untracked worktree
 
 
 def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
