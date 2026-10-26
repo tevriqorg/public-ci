@@ -80,7 +80,10 @@ class RepairQueueTests(unittest.TestCase):
             code.parent.mkdir(parents=True)
             code.write_text('print("fixture")\n')
             ignore=root/'implementation'/'.gitignore'
-            ignore.write_text('.tmp/\nfrontend-r2/node_modules/\nfrontend-r2/package-lock.json\n')
+            ignore.write_text(
+                '.tmp/\nfrontend-r2/node_modules/\nfrontend-r2/package-lock.json\n'
+                'frontend-r2/*.tsbuildinfo\n'
+            )
             subprocess.run(['git','init','-q'],cwd=root,check=True)
             subprocess.run(['git','config','user.name','P16 fixture'],cwd=root,check=True)
             subprocess.run(['git','config','user.email','p16-fixture@example.invalid'],cwd=root,check=True)
@@ -92,6 +95,7 @@ class RepairQueueTests(unittest.TestCase):
                 root/'implementation'/'.tmp'/'frontend-dist'/'index.html',
                 root/'implementation'/'frontend-r2'/'node_modules'/'vite'/'index.js',
                 root/'implementation'/'frontend-r2'/'package-lock.json',
+                root/'implementation'/'frontend-r2'/'tsconfig.app.tsbuildinfo',
             ]
             for output in outputs:
                 output.parent.mkdir(parents=True,exist_ok=True)
