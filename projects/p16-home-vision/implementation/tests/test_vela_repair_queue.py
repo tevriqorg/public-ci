@@ -13,6 +13,7 @@ from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from p16_soak import enqueue_failures, main, registry, verify_source_revision
+from vela_soak_runtime import command_handler
 
 class RepairQueueTests(unittest.TestCase):
     def test_source_revision_requires_matching_clean_code_tree(self):
@@ -208,6 +209,19 @@ class RepairQueueTests(unittest.TestCase):
                     main(['once','--state',str(state),'--source-sha','a'*40])
             self.assertEqual(raised.exception.code,2)
             self.assertEqual(state.read_text(),'preserve')
+
+    def test_command_handler_marks_nested_wrapper_child(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            output=root/'child-marker'
+            script=root/'check-child.py'
+            script.write_text(
+                'import os\nfrom pathlib import Path\n'
+                f'Path({str(output)!r}).write_text(os.environ.get("P16_SOAK_WRAPPER_CHILD", ""))\n'
+            )
+            result=command_handler([sys.executable,str(script)],cwd=root,timeout_seconds=5)({})
+            self.assertEqual(result['status'],'PASS')
+            self.assertEqual(output.read_text(),'1')
 
     def test_scenario_mode_passes_only_the_selected_case_to_cycle_runner(self):
         with tempfile.TemporaryDirectory() as d:
