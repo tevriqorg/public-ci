@@ -273,9 +273,11 @@ def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
 
     raw_sha256 = hashlib.sha256(raw.read_bytes()).hexdigest()
     paths = DerivationPaths(raw=raw, root=tmp_path / "derived-10m")
+    source_start_epoch = 1_700_000_000.0
+    assert source_start_epoch < time.time()
     started = time.monotonic()
     result = run_derivation(paths, DerivationPlan(has_audio=True),
-                            source_start_epoch=1_798_272_000.0)
+                            source_start_epoch=source_start_epoch)
     elapsed = time.monotonic() - started
     assert elapsed < 180
     assert result["raw_deleted"] is False
