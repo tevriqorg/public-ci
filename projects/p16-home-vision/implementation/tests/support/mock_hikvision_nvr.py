@@ -49,6 +49,7 @@ class MockHikvisionNvr:
         *,
         username: str = "fixture-user",
         password: str = "fixture-password",
+        challenge_nonce: str | None = None,
         search_statuses: list[int] | None = None,
         search_error_bodies: list[bytes] | None = None,
         download_statuses: list[int] | None = None,
@@ -61,6 +62,7 @@ class MockHikvisionNvr:
         self.recordings = recordings
         self.username = username
         self.password = password
+        self.challenge_nonce = challenge_nonce or self.nonce
         self.search_statuses = list(search_statuses or [])
         self.search_error_bodies = list(search_error_bodies or [])
         self.download_statuses = list(download_statuses or [])
@@ -107,7 +109,7 @@ class MockHikvisionNvr:
                     self.send_response(401)
                     self.send_header(
                         "WWW-Authenticate",
-                        f'Digest realm="{owner.realm}", nonce="{owner.nonce}", algorithm=MD5, qop="auth"',
+                        f'Digest realm="{owner.realm}", nonce="{owner.challenge_nonce}", algorithm=MD5, qop="auth"',
                     )
                     self.send_header("Content-Length", "0")
                     self.send_header("Connection", "close")
