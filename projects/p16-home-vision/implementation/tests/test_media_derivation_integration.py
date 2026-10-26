@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import hashlib
+import resource
 import secrets
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -20,7 +22,7 @@ def _files_containing(root: Path, token: bytes) -> list[str]:
             if path.is_file() and token in path.read_bytes()]
 
 
-def _make_hevc_sample(path: Path, *, required: bool = False) -> None:
+def _make_hevc_sample(path: Path, *, required: bool = False, duration_seconds: float = 2.4) -> None:
     completed = subprocess.run(
         [
             "ffmpeg",
@@ -31,11 +33,11 @@ def _make_hevc_sample(path: Path, *, required: bool = False) -> None:
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=size=160x90:rate=10:duration=2.4",
+            f"testsrc2=size=160x90:rate=10:duration={duration_seconds}",
             "-f",
             "lavfi",
             "-i",
-            "sine=frequency=880:sample_rate=8000:duration=2.4",
+            f"sine=frequency=880:sample_rate=8000:duration={duration_seconds}",
             "-c:v",
             "libx265",
             "-preset",
@@ -53,6 +55,7 @@ def _make_hevc_sample(path: Path, *, required: bool = False) -> None:
         stderr=subprocess.PIPE,
         text=True,
         check=False,
+        timeout=240,
     )
     if completed.returncode != 0:
         detail = f"ffmpeg cannot create required HEVC fixture: {completed.stderr[-500:]}"
@@ -168,3 +171,37 @@ def test_s027_synthetic_raw_retention_and_secret_redaction(tmp_path: Path, monke
     finally:
         injected.unlink(missing_ok=True)
     assert _files_containing(asset_root, canary) == []
+
+
+def test_s035_ten_minute_derivation_stays_within_time_memory_and_storage_bounds(tmp_path: Path):
+    """Run real derivation on bounded synthetic long media and check resource envelope."""
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.fail("S035 requires ffmpeg/ffprobe; scenario cannot be a skip")
+    raw = tmp_path / "synthetic-10m.mkv"
+    _make_hevc_sample(raw, required=True, duration_seconds=600)
+    source = probe_source(raw)
+    assert source.duration_seconds is not None and source.duration_seconds >= 599
+
+    paths = DerivationPaths(raw=raw, root=tmp_path / "derived-10m")
+    started = time.monotonic()
+    result = run_derivation(paths, DerivationPlan(has_audio=True),
+                            source_start_epoch=1_798_272_000.0)
+    elapsed = time.monotonic() - started
+    assert elapsed < 180
+    assert result["raw_deleted"] is False
+    assert result["frame_count"] >= 590
+    assert paths.web_final.is_file() and paths.audio_final.is_file()
+    assert paths.frame_manifest_final.is_file()
+    web = probe_source(paths.web_final)
+    assert web.duration_seconds is not None and web.duration_seconds >= 599
+    frame_rows = [json.loads(line) for line in
+                  paths.frame_manifest_final.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(frame_rows) == result["frame_count"]
+    assert frame_rows[0]["source_pts_seconds"] >= 0
+    assert frame_rows[-1]["source_pts_seconds"] >= 590
+
+    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    peak_bytes = peak if sys.platform == "darwin" else peak * 1024
+    assert peak_bytes < 512 * 1024 * 1024
+    footprint = sum(path.stat().st_size for path in tmp_path.rglob("*") if path.is_file())
+    assert footprint < 256 * 1024 * 1024

@@ -149,6 +149,9 @@ def registry():
         'S034': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S035': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_media_derivation_integration.py::test_s035_ten_minute_derivation_stays_within_time_memory_and_storage_bounds'],
+            cwd=ROOT/'implementation',timeout_seconds=240),
     }
 
 
