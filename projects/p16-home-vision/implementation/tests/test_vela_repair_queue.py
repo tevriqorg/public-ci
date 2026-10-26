@@ -40,12 +40,20 @@ class RepairQueueTests(unittest.TestCase):
             extra.write_text('pass\n')
             with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
                 verify_source_revision(root,sha)
+            extra.unlink()
+            oddly_named=root/'implementation'/'tests'/'newline\nfile.py'
+            oddly_named.write_text('pass\n')
+            with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                verify_source_revision(root,sha)
 
             mirror=root/'mirror'
             project=mirror/'projects'/'p16-home-vision'
             project_code=project/'implementation'/'scripts'/'runner.py'
             project_code.parent.mkdir(parents=True)
             project_code.write_text('print("mirrored fixture")\n')
+            catalog=project/'design'/'P16R2_VELA_SOAK_G0_SCENARIOS_v1.json'
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text('{"scenarios":[]}\n')
             (project/'SOURCE_REVISION').write_text('b'*40+'\n')
             subprocess.run(['git','init','-q'],cwd=mirror,check=True)
             subprocess.run(['git','config','user.name','P16 fixture'],cwd=mirror,check=True)
@@ -53,9 +61,16 @@ class RepairQueueTests(unittest.TestCase):
             subprocess.run(['git','add','projects/p16-home-vision'],cwd=mirror,check=True)
             subprocess.run(['git','commit','-qm','mirror fixture'],cwd=mirror,check=True)
             self.assertEqual(verify_source_revision(project,'b'*40),'b'*40)
+            self.assertEqual(verify_source_revision(project/'implementation','b'*40),'b'*40)
             project_code.write_text('print("changed mirror")\n')
             with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
                 verify_source_revision(project,'b'*40)
+            with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                verify_source_revision(project/'implementation','b'*40)
+            project_code.write_text('print("mirrored fixture")\n')
+            catalog.write_text('{"scenarios":[{"id":"S024"}]}\n')
+            with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                verify_source_revision(project/'implementation','b'*40)
 
     def test_cli_refuses_source_mismatch_before_state_writes(self):
         with tempfile.TemporaryDirectory() as d:

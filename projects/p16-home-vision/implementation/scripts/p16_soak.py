@@ -32,30 +32,56 @@ def verify_source_revision(root, source_sha):
     root = root.resolve()
     prefix = root.relative_to(repository).as_posix()
     prefix = "" if prefix == "." else prefix + "/"
-    mapped_revision = root / "SOURCE_REVISION"
+    revision_candidates = [root / "SOURCE_REVISION"]
+    if root.name == "implementation":
+        revision_candidates.append(root.parent / "SOURCE_REVISION")
+    mapped_revision = next((path for path in revision_candidates if path.is_file()), None)
     expected_revision = head
-    if mapped_revision.is_file():
+    if mapped_revision is not None:
         try:
-            expected_revision = mapped_revision.read_text(encoding="ascii").strip()
+            marker = mapped_revision.read_text(encoding="ascii").strip()
         except (OSError, UnicodeError):
             raise ValueError("SOURCE_REVISION_UNAVAILABLE") from None
+        if "=" in marker:
+            revisions = [line.partition("=")[2] for line in marker.splitlines()
+                         if line.startswith("commit=")]
+            if len(revisions) != 1:
+                raise ValueError("SOURCE_REVISION_UNAVAILABLE")
+            expected_revision = revisions[0]
+        else:
+            expected_revision = marker
     if expected_revision != source_sha:
         raise ValueError("SOURCE_SHA_DOES_NOT_MATCH_CHECKOUT")
     try:
         status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-            cwd=root, check=True, capture_output=True, text=True,
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=repository, check=True, capture_output=True,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         raise ValueError("SOURCE_REVISION_UNAVAILABLE") from None
-    for line in status.splitlines():
-        path = line[3:]
+    if root.name == "implementation":
+        implementation = prefix.rstrip("/") + "/"
+        # The canonical source checkout stores design beside implementation;
+        # the public mirror stores the same catalog beside its implementation.
+        project_prefix = prefix.rstrip("/").rsplit("/", 1)[0]
+        if project_prefix:
+            project_prefix += "/"
+        catalog_paths = {project_prefix + "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json"}
+        marker_paths = {project_prefix + "SOURCE_REVISION"}
+    else:
         implementation = prefix + "implementation/"
-        catalog = prefix + "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json"
-        revision_marker = prefix + "SOURCE_REVISION"
-        if path == implementation + ".tmp" or path.startswith(implementation + ".tmp/"):
+        catalog_paths = {prefix + "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json"}
+        marker_paths = {prefix + "SOURCE_REVISION"}
+    for entry in status.split(b"\0"):
+        if not entry:
             continue
-        if path.startswith(implementation) or path in (catalog, revision_marker):
+        path = entry[3:] if len(entry) >= 3 and entry[2:3] == b" " else entry
+        implementation_bytes = implementation.encode("utf-8")
+        catalog_bytes = {candidate.encode("utf-8") for candidate in catalog_paths}
+        marker_bytes = {candidate.encode("utf-8") for candidate in marker_paths}
+        if path == implementation_bytes + b".tmp" or path.startswith(implementation_bytes + b".tmp/"):
+            continue
+        if path.startswith(implementation_bytes) or path in catalog_bytes or path in marker_bytes:
             raise ValueError("SOURCE_TREE_DIRTY")
     return expected_revision
 
@@ -279,7 +305,12 @@ def main(argv=None):
         p.error(f'cannot prepare --state directory: {exc.strerror or type(exc).__name__}')
     if any(item.is_symlink() for item in a.state.rglob('*')):
         p.error('--state tree must not contain symlinks')
-    catalog=json.loads((ROOT/'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json').read_text())
+    catalog_path = ROOT/'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json'
+    if not catalog_path.is_file() and ROOT.name == 'implementation':
+        catalog_path = ROOT.parent/'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json'
+    if not catalog_path.is_file():
+        p.error('scenario catalog is unavailable')
+    catalog=json.loads(catalog_path.read_text())
     if a.scenario_id and a.scenario_id not in {s['id'] for s in catalog['scenarios']}:
         p.error('unknown scenario')
     store=EvidenceStore(a.state)
