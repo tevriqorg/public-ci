@@ -330,21 +330,27 @@ def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path
         chain.append({**payload, "sha256": entry_hash})
         previous = entry_hash
     assert len(chain) == 15
-    recomputed = []
-    previous = "0" * 64
-    for entry in chain:
-        payload = {key: value for key, value in entry.items() if key != "sha256"}
-        assert payload["previous"] == previous
-        entry_hash = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        assert entry["sha256"] == entry_hash
-        recomputed.append(entry_hash)
-        previous = entry_hash
-    assert len(set(recomputed)) == 15
+    def verify_chain(raw):
+        entries = json.loads(raw)
+        assert len(entries) == 15
+        recomputed = []
+        prior_hash = "0" * 64
+        for entry in entries:
+            payload = {key: value for key, value in entry.items() if key != "sha256"}
+            assert payload["previous"] == prior_hash
+            entry_hash = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            assert entry["sha256"] == entry_hash
+            recomputed.append(entry_hash)
+            prior_hash = entry_hash
+        assert len(set(recomputed)) == 15
+        assert [entry["day"] for entry in entries] == sorted(daily_records)
+        return recomputed
     chain_path = state / "history-chain.json"
     chain_path.write_text(json.dumps(chain, sort_keys=True, separators=(",", ":")))
     chain_bytes = chain_path.read_bytes()
+    initial_chain_hashes = verify_chain(chain_bytes)
 
     # Capture one real production reconciliation duration per historical date.
     # Each call checks the full 15-date storage inventory; date keys make the
@@ -367,6 +373,7 @@ def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path
     summary_bytes = summary_path.read_bytes()
     summary = json.loads(summary_bytes)
     assert summary["p95_ns"] == sorted(s["elapsed_ns"] for s in summary["samples"])[14]
+    assert [sample["day"] for sample in summary["samples"]] == sorted(daily_records)
 
     # Mutate a past file without changing size; an independent bytes-based SHA
     # oracle must identify exactly the affected historical ledger row.
@@ -387,6 +394,11 @@ def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path
     assert not any(finding.code == "ASSET_SIZE_MISMATCH" for finding in changed.findings)
     assert chain_path.read_bytes() == chain_bytes
     assert summary_path.read_bytes() == summary_bytes
+    assert verify_chain(chain_path.read_bytes()) == initial_chain_hashes
+    changed_summary = json.loads(summary_path.read_bytes())
+    assert changed_summary["p95_ns"] == sorted(
+        sample["elapsed_ns"] for sample in changed_summary["samples"]
+    )[14]
     assert mutated_path.read_bytes() == mutated_bytes
     assert [
         (asset.id, asset.relative_path, asset.size_bytes, asset.sha256,
@@ -437,7 +449,7 @@ def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path
         .filter_by(nvr_id=nvr.id).order_by(SourceRecording.source_start).all()
     ] == sources_before
     assert store.records() == persisted
-    assert len(json.loads(chain_path.read_bytes())) == 15
+    assert verify_chain(chain_path.read_bytes()) == initial_chain_hashes
     assert len(json.loads(summary_path.read_bytes())["samples"]) == 15
 
     mutated_path.write_bytes(original_bytes)
@@ -447,6 +459,7 @@ def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path
     assert restored.clean
     assert chain_path.read_bytes() == chain_bytes
     assert summary_path.read_bytes() == summary_bytes
+    assert verify_chain(chain_path.read_bytes()) == initial_chain_hashes
     assert len([path for path in (tmp_path / "recordings").rglob("*.mp4")]) == 15
     assert all(hashlib.sha256(path.read_bytes()).hexdigest() == expected_hashes[path]
                for path in snapshots)
