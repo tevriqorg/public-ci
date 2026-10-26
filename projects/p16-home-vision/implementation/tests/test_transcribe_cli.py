@@ -145,7 +145,9 @@ def test_s021_same_basename_wrapper_revision_is_persisted_as_transcript_provenan
     wrapper = tmp_path / "asr-wrapper"
 
     def run_revision(revision):
-        output = json.dumps([{"start_ms": 0, "end_ms": 300, "text": revision}])
+        # Keep inference output constant so transcript content cannot masquerade
+        # as wrapper/model provenance when the implementation is mutated.
+        output = json.dumps([{"start_ms": 0, "end_ms": 300, "text": "stable transcript"}])
         wrapper.write_text(
             f"#!/bin/sh\n# synthetic model revision {revision}\ncat <<'JSON'\n{output}\nJSON\n",
             encoding="utf-8",
@@ -173,8 +175,7 @@ def test_s021_same_basename_wrapper_revision_is_persisted_as_transcript_provenan
     assert first_status_version.startswith("sha256:")
     assert second_status_version.startswith("sha256:")
     assert first_status_version != second_status_version
-    assert first_text == "model-a"
-    assert second_text == "model-b"
+    assert first_text == second_text == "stable transcript"
 
 
 def test_asr_fingerprints_path_resolved_wrapper_and_streams_model_files(tmp_path, monkeypatch):
