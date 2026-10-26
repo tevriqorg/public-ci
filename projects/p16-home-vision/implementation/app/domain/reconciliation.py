@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -113,6 +114,23 @@ def reconcile_storage_files(session: Session) -> StorageReconciliationResult:
                     "FILE_PRESENT_FOR_MISSING_ASSET", volume_id, asset.relative_path, asset.id
                 ))
 
+            if (exists and asset.lifecycle_state == "present"
+                    and asset.verification_state == "verified"):
+                try:
+                    size = candidate.stat().st_size
+                    if size != asset.size_bytes:
+                        findings.append(StorageFinding(
+                            "ASSET_SIZE_MISMATCH", volume_id, asset.relative_path, asset.id
+                        ))
+                    if asset.sha256 and _sha256_file(candidate) != asset.sha256:
+                        findings.append(StorageFinding(
+                            "ASSET_SHA256_MISMATCH", volume_id, asset.relative_path, asset.id
+                        ))
+                except OSError:
+                    findings.append(StorageFinding(
+                        "ASSET_FILE_UNREADABLE", volume_id, asset.relative_path, asset.id
+                    ))
+
         recordings = root / "recordings"
         if recordings.is_symlink():
             findings.append(StorageFinding("RECORDINGS_ROOT_SYMLINK", volume_id, "recordings"))
@@ -141,6 +159,14 @@ def reconcile_storage_files(session: Session) -> StorageReconciliationResult:
     return StorageReconciliationResult(tuple(sorted(
         findings, key=lambda item: (item.code, item.volume_id, item.relative_path, item.asset_id or "")
     )))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def reconcile_segments(
