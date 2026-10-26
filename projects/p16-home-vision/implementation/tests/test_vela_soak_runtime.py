@@ -292,6 +292,8 @@ class RuntimeTests(unittest.TestCase):
                                           forward_stderr=forward)({})
                 self.assertEqual(outcome["exit_code"], 7)
                 self.assertIs(spawn.call_args.kwargs["stderr"], expected)
+                expected_stdout = sys.stderr if forward else vela_soak_runtime.subprocess.DEVNULL
+                self.assertIs(spawn.call_args.kwargs["stdout"], expected_stdout)
 
     def test_continuous_process_runs_until_stop(self):
         calls=[]

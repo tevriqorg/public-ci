@@ -7,6 +7,7 @@ import os
 import sqlite3
 import signal
 import subprocess
+import sys
 from contextlib import contextmanager
 import time
 import uuid
@@ -264,7 +265,7 @@ def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False):
         child_env = os.environ.copy()
         child_env["P16_SOAK_WRAPPER_CHILD"] = "1"
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.DEVNULL,
+                                   stdout=sys.stderr if forward_stderr else subprocess.DEVNULL,
                                    stderr=None if forward_stderr else subprocess.DEVNULL,
                                    env=child_env,
                                    start_new_session=True)
