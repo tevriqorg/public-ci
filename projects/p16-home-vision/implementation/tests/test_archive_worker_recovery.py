@@ -53,6 +53,22 @@ class _S007SyntheticClient:
         return len(payload)
 
 
+class _S009BlockingClient(_S007SyntheticClient):
+    def __init__(self, partial_pipe):
+        super().__init__()
+        self.partial_pipe = partial_pipe
+
+    def download_to_part(self, _uri, part_path, *, progress_callback=None):
+        payload = b"PARTIAL-S009-RECOVERY-FIXTURE"
+        part_path.parent.mkdir(parents=True, exist_ok=True)
+        part_path.write_bytes(payload)
+        if progress_callback:
+            progress_callback(len(payload))
+        self.partial_pipe.send(str(part_path))
+        while True:
+            time.sleep(10)
+
+
 def _s007_kill_after_promotion(database_url, promoted_pipe):
     engine = create_db_engine(database_url)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -70,6 +86,18 @@ def _s007_kill_after_promotion(database_url, promoted_pipe):
     with factory() as child_session:
         archive_worker.process_one(
             child_session, _S007SyntheticClient(), probe=FakeProbe(), worker_id="s007-kill-worker"
+        )
+    engine.dispose()
+
+
+def _s009_kill_during_download(database_url, partial_pipe):
+    engine = create_db_engine(database_url)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    archive_worker._touch_heartbeat = lambda *_args, **_kwargs: None
+    with factory() as child_session:
+        archive_worker.process_one(
+            child_session, _S009BlockingClient(partial_pipe),
+            probe=FakeProbe(), worker_id="s009-kill-worker",
         )
     engine.dispose()
 
@@ -242,6 +270,83 @@ def test_s007_sigkill_after_file_promotion_recovers_without_nvr_redownload(sessi
         assert session.query(AuditEvent).filter_by(
             event_type="archive_orphan_recovered", entity_id=asset.id
         ).count() == 1
+    finally:
+        if child.is_alive():
+            os.kill(child.pid, signal.SIGKILL)
+            child.join(timeout=10)
+        recv_pipe.close()
+
+
+def test_s009_killed_download_recovers_quarantines_part_and_completes_once(session, tmp_path):
+    nvr = NvrDevice(id="nvr-s009-kill", name="S009 synthetic", host="127.0.0.1")
+    camera = CameraTrack(id="camera-s009-kill", nvr_id=nvr.id, track_id="201",
+                         camera_name="S009 synthetic")
+    source = SourceRecording(
+        id="source-s009-kill", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=datetime(2026, 8, 27, 6, tzinfo=timezone.utc),
+        source_end=datetime(2026, 8, 27, 6, 0, 10, tzinfo=timezone.utc),
+        duration_ms=10_000, source_size_if_known=4096, source_state="available",
+    )
+    volume_root = tmp_path / "s009-volume"
+    volume = StorageVolume(
+        id="volume-s009-kill", node_id="fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    )
+    job = ArchiveJob(id="job-s009-kill", source_recording_id=source.id, state="queued")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    session.add(source)
+    session.add(volume)
+    session.flush()
+    session.add(job)
+    session.commit()
+
+    context = multiprocessing.get_context("fork")
+    recv_pipe, send_pipe = context.Pipe(duplex=False)
+    child = context.Process(
+        target=_s009_kill_during_download,
+        args=(session.get_bind().url.render_as_string(hide_password=False), send_pipe),
+    )
+    child.start()
+    send_pipe.close()
+    try:
+        assert recv_pipe.poll(20), "worker never reached the partial-download crash point"
+        partial_path = Path(recv_pipe.recv())
+        os.kill(child.pid, signal.SIGKILL)
+        child.join(timeout=10)
+        assert child.exitcode == -signal.SIGKILL
+        assert partial_path.read_bytes() == b"PARTIAL-S009-RECOVERY-FIXTURE"
+
+        session.expire_all()
+        interrupted = session.get(ArchiveJob, job.id)
+        assert interrupted.state == "downloading"
+        assert interrupted.bytes_received == len(b"PARTIAL-S009-RECOVERY-FIXTURE")
+        interrupted.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        session.commit()
+        archive_worker._recover_interrupted_jobs(session)
+        assert session.get(ArchiveJob, job.id).state == "queued"
+
+        archive_worker._touch_heartbeat = lambda *_args, **_kwargs: None
+        assert archive_worker.process_one(
+            session, _S007SyntheticClient(), probe=FakeProbe(), worker_id="s009-restart-worker"
+        ) == job.id
+        asset = session.query(LocalAsset).filter_by(source_recording_id=source.id).one()
+        final_path = volume_root / "recordings/2026/08/27/camera-201/060000-source-s009-kill.mp4"
+        quarantined = list((volume_root / ".quarantine").glob("*.partial"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_bytes() == b"PARTIAL-S009-RECOVERY-FIXTURE"
+        assert session.query(AuditEvent).filter_by(
+            event_type="archive_partial_quarantined", entity_id=job.id
+        ).count() == 1
+        assert final_path.is_file()
+        assert asset.verification_state == "verified"
+        assert asset.sha256 == hashlib.sha256(final_path.read_bytes()).hexdigest()
+        assert session.query(LocalAsset).filter_by(source_recording_id=source.id).count() == 1
+        recovered = session.get(ArchiveJob, job.id)
+        assert recovered.state == "completed"
+        assert recovered.attempt_count == 2
     finally:
         if child.is_alive():
             os.kill(child.pid, signal.SIGKILL)

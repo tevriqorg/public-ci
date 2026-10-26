@@ -32,7 +32,7 @@ export default async function runRegisteredSoakScenarios() {
   console.log(`[P16_SOURCE_STATUS] ${JSON.stringify(dirtyPaths.slice(0, 30))}`)
 
   const stateDir = resolve(implementationDir, '.tmp', 'hosted-browser-scenarios')
-  for (const scenarioId of ['S007', 'S024', 'S025']) {
+  for (const scenarioId of ['S007', 'S009', 'S024', 'S025']) {
     const execution = spawnSync('python', [
       resolve(implementationDir, 'scripts', 'p16_soak.py'),
       'scenario', '--scenario-id', scenarioId,
