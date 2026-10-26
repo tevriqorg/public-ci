@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 import shutil
 import subprocess
 import threading
@@ -1044,5 +1045,49 @@ def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session):
     assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
     assert list(session.scalars(select(SourceRecording).where(
         SourceRecording.nvr_id == nonce_nvr.id))) == []
+    assert list(session.scalars(select(ArchiveJob))) == []
+    assert list(session.scalars(select(LocalAsset))) == []
+
+
+def test_s027_authenticated_secret_is_not_persisted_on_search_failure(session, tmp_path, caplog):
+    """A reflected secret-bearing NVR error stays out of P16 state and logs."""
+    canary = "s027-secret-" + secrets.token_hex(24)
+    nvr = NvrDevice(id="s027-nvr", name="S027 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s027-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S027 synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    start = datetime.now(timezone.utc) - timedelta(days=2)
+
+    with MockHikvisionNvr(
+        [], username="s027-user", password=canary, search_statuses=[500],
+        search_error_body_once=f"upstream credential echo: {canary}".encode(),
+    ) as mock_nvr:
+        with HikvisionIsapiClient(
+            base_url=mock_nvr.base_url, username=mock_nvr.username,
+            password=mock_nvr.password,
+            timeout_seconds=5,
+        ) as client:
+            result = scan_camera_range(
+                session, nvr=nvr, camera=camera, query_start=start,
+                query_end=start + timedelta(days=1), searcher=client,
+                scan_id="s027-secret-redaction",
+            )
+        assert mock_nvr.authorization_count == 1
+        assert mock_nvr.search_count == 1
+
+    assert (result.state, result.error_code) == ("failed", "NVR_SEARCH_HTTP_500")
+    scan = session.get(ScanRun, result.scan_id)
+    assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_500"
+    assert canary not in repr(result)
+    assert canary not in repr(scan)
+    assert canary not in repr(nvr)
+    assert canary not in caplog.text
+    session.commit()
+    assert canary.encode() not in (tmp_path / "test.db").read_bytes()
+    assert list(session.scalars(select(SourceRecording).where(
+        SourceRecording.nvr_id == nvr.id))) == []
     assert list(session.scalars(select(ArchiveJob))) == []
     assert list(session.scalars(select(LocalAsset))) == []

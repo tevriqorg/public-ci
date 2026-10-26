@@ -1,4 +1,4 @@
 repository=tevriqorg/P16-Home-Vision
 branch=test/p16r2-vela-15d-soak
-commit=f7b36528420e0bdce5267b1cb122f1fa2b9e2b58
+commit=0c577cf4c654f3d0c75232632a2f2b256e77e3af
 copied_paths=implementation/,design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json
