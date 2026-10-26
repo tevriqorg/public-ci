@@ -4,9 +4,13 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "implementation/scripts"))
+import vela_soak_runtime
 from vela_soak_runtime import EvidenceStore, continuous, run_cycle, run_scenario, cycle_lock, command_handler, record_daily_cycle
 CATALOG = json.loads((ROOT / "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json").read_text())
 
@@ -67,6 +71,73 @@ class RuntimeTests(unittest.TestCase):
                 observed_at="2026-10-25T00:25:00+08:00")
             self.assertEqual(daily["schedule"], catchup["schedule"] + [
                 ("2026-10-25", "PASS")])
+
+    def test_s030_bug_reproducer_recovery_and_adjacent_regression_are_immutable(self):
+        today = datetime.now(ZoneInfo("Asia/Singapore")).date()
+        start = (today - timedelta(days=3)).isoformat()
+        old_day = (today - timedelta(days=2)).isoformat()
+        today_text = today.isoformat()
+
+        def exercise(root, recorder):
+            recorder(root, scheduled_start=start, observed_day=old_day,
+                     run_id="late-catchup", complete=True,
+                     observed_at=f"{today_text}T00:20:00+08:00")
+            return recorder(root, scheduled_start=start, observed_day=today_text,
+                            run_id="on-date", complete=True,
+                            observed_at=f"{today_text}T00:25:00+08:00")
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            store = EvidenceStore(root / "learning-evidence")
+            original = record(run_id="s030-original-failure", scenario_id="S030",
+                              seed="p16-g0-v1-S030", result={"bug": "late catch-up finalized current day"})
+            failure_hash = store.append(original)
+            failure_bytes = (store.runs / f"{failure_hash}.json").read_bytes()
+
+            real_recorder = vela_soak_runtime.record_daily_cycle
+
+            def retroactive_missing_mutant(*args, **kwargs):
+                result = real_recorder(*args, **kwargs)
+                if kwargs["run_id"] == "late-catchup":
+                    with sqlite3.connect(Path(args[0]) / "daily-ledger.sqlite3") as db:
+                        db.execute("INSERT OR IGNORE INTO daily_schedule VALUES (?, 'MISSING')",
+                                   (today_text,))
+                    result["schedule"].append((today_text, "MISSING"))
+                else:
+                    with sqlite3.connect(Path(args[0]) / "daily-ledger.sqlite3") as db:
+                        result["schedule"] = db.execute(
+                            "SELECT day, state FROM daily_schedule ORDER BY day").fetchall()
+                return result
+
+            with tempfile.TemporaryDirectory() as mutant_root:
+                with patch.object(vela_soak_runtime, "record_daily_cycle",
+                                  side_effect=retroactive_missing_mutant):
+                    with self.assertRaises(AssertionError):
+                        self.assertEqual(exercise(mutant_root, vela_soak_runtime.record_daily_cycle)
+                                         ["schedule"][-1], (today_text, "PASS"))
+
+            with tempfile.TemporaryDirectory() as fixed_root:
+                fixed = exercise(fixed_root, real_recorder)
+                self.assertEqual(fixed["schedule"][-1], (today_text, "PASS"))
+                self.assertEqual(fixed["schedule"][-2][1], "MISSING")
+
+            with tempfile.TemporaryDirectory() as adjacent_root:
+                adjacent = real_recorder(
+                    adjacent_root, scheduled_start=today_text, observed_day=today_text,
+                    run_id="on-date-failure", complete=False,
+                    observed_at=f"{today_text}T00:30:00+08:00")
+                self.assertEqual(adjacent["schedule"], [(today_text, "FAIL")])
+
+            recovery = record(run_id="s030-fixed-recovery", scenario_id="S030",
+                              seed="p16-g0-v1-S030", status="PASS",
+                              recovery_of=original["run_id"],
+                              result={"targeted": "PASS", "adjacent": "PASS"})
+            store.append(recovery)
+            self.assertEqual((store.runs / f"{failure_hash}.json").read_bytes(), failure_bytes)
+            records = {item["run_id"]: item for item in store.records()}
+            self.assertEqual(records[original["run_id"]]["status"], "FAIL")
+            self.assertEqual(records[recovery["run_id"]]["status"], "PASS")
+            self.assertEqual(records[recovery["run_id"]]["recovery_of"], original["run_id"])
 
     def test_original_fail_survives_linked_recovery_and_duplicate_rejected(self):
         with tempfile.TemporaryDirectory() as d:

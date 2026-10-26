@@ -125,6 +125,9 @@ def registry():
         'S029': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_repair_queue.py::RepairQueueTests::test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S030': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_vela_soak_runtime.py::RuntimeTests::test_s030_bug_reproducer_recovery_and_adjacent_regression_are_immutable'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 

@@ -245,3 +245,9 @@ class RepairQueueTests(unittest.TestCase):
         self.assertEqual(outcome['status'],'PASS')
         self.assertEqual(outcome['exit_code'],0)
         self.assertFalse(outcome['timed_out'])
+
+    def test_s030_registered_handler_executes_learning_regression(self):
+        outcome=registry()['S030']({'id':'S030'})
+        self.assertEqual(outcome['status'],'PASS')
+        self.assertEqual(outcome['exit_code'],0)
+        self.assertFalse(outcome['timed_out'])
