@@ -335,8 +335,8 @@ class RepairQueueTests(unittest.TestCase):
                                        '--source-sha','a'*40]), 0)
             self.assertEqual(seen, ['S014'])
 
-    def test_s026_hostile_endpoint_and_bind_injection_stays_isolated(self):
-        """Remote env values and insecure bind requests cannot escape the local runner."""
+    def test_component_cli_rejects_non_loopback_bind_and_socket_canary_kills_mutant(self):
+        """Validate CLI bind rejection and the canary itself; not child egress isolation."""
         attempts=[]
         violations=[]
         base_socket=socket.socket
@@ -385,40 +385,6 @@ class RepairQueueTests(unittest.TestCase):
                 finally:
                     canary.close()
             self.assertEqual(violations,[('bind','0.0.0.0')])
-            attempts.clear()
-            violations.clear()
-
-            state=root/'evidence'
-            env={
-                'P16_NVR_ENDPOINT':'http://198.51.100.23:8000',
-                'P16_SOAK_ENDPOINT':'https://203.0.113.41:443',
-                'P16_HTTP_BIND_HOST':'0.0.0.0',
-                'NVR_URL':'http://192.0.2.17:80',
-                'P16_API_BIND':'::',
-            }
-            handler=lambda _: {'status':'PASS','oracle':'socket_and_state_audit'}
-            output=io.StringIO()
-            with patch.dict(os.environ,env,clear=False), \
-                 patch('socket.socket',AuditedSocket), \
-                 patch('p16_soak.registry',return_value={'S026':handler}), \
-                 patch('p16_soak.verify_source_revision',return_value='a'*40), \
-                 contextlib.redirect_stdout(output):
-                self.assertEqual(main(['scenario','--scenario-id','S026','--state',str(state),
-                                       '--source-sha','a'*40]),0)
-
-            self.assertEqual(violations,[])
-            self.assertEqual(attempts,[])
-            result=json.loads(output.getvalue())
-            self.assertEqual([r['scenario_id'] for r in result['results']],['S026'])
-            self.assertEqual(result['results'][0]['status'],'PASS')
-            self.assertFalse(result['day_credit'])
-            evidence=list((state/'runs').glob('*.json'))
-            self.assertEqual(len(evidence),1)
-            record=json.loads(evidence[0].read_bytes())
-            from vela_soak_runtime import digest
-            self.assertEqual(evidence[0].stem,digest(record))
-            self.assertEqual(record['source_sha'],'a'*40)
-            self.assertEqual(record['status'],'PASS')
 
     def test_s026_process_local_socket_canary_does_not_promote_scenario(self):
         self.assertNotIn('S026', registry())

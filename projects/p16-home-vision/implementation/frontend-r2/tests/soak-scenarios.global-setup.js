@@ -1,8 +1,33 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { dirname, resolve, relative } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve, relative, sep } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+
+export function readSourceRevision(sourceMarkerPath, { required = false } = {}) {
+  if (!existsSync(sourceMarkerPath)) {
+    if (required) throw new Error('P16_SOURCE_REVISION_MARKER_REQUIRED')
+    return null
+  }
+  const sourceMarker = readFileSync(sourceMarkerPath, 'utf8')
+  const revisions = [...sourceMarker.matchAll(/^commit=(.*)$/gm)].map((match) => match[1])
+  if (revisions.length !== 1 || !/^[0-9a-f]{40}$/.test(revisions[0])) {
+    throw new Error('P16_SOURCE_REVISION_MARKER_INVALID')
+  }
+  return revisions[0]
+}
+
+export function createMatrixStateDir({ runnerTemp, implementationDir, fallbackTemp = tmpdir() }) {
+  const parent = resolve(runnerTemp || fallbackTemp)
+  mkdirSync(parent, { recursive: true })
+  const stateDir = mkdtempSync(join(parent, 'p16-soak-matrix-'))
+  if (implementationDir && (stateDir === resolve(implementationDir) ||
+      stateDir.startsWith(`${resolve(implementationDir)}${sep}`))) {
+    throw new Error('P16_MATRIX_STATE_INSIDE_IMPLEMENTATION')
+  }
+  return stateDir
+}
 
 const stable = (value) => Array.isArray(value)
   ? value.map(stable)
@@ -19,13 +44,13 @@ export default async function runRegisteredSoakScenarios() {
   const catalogPath = resolve(projectRoot, 'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json')
   const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'))
   const sourceMarkerPath = resolve(projectRoot, 'SOURCE_REVISION')
-  if (!existsSync(sourceMarkerPath)) {
+  const sourceSha = readSourceRevision(sourceMarkerPath, {
+    required: process.env.P16_SOAK_MATRIX_REQUIRED === '1',
+  })
+  if (!sourceSha) {
     console.log('[P16_SOAK_MATRIX_SKIPPED] exact SOURCE_REVISION mapping is absent; run the matrix from the provisioned public-ci source mirror')
     return
   }
-  const sourceMarker = readFileSync(sourceMarkerPath, 'utf8')
-  const sourceSha = sourceMarker.match(/^commit=([0-9a-f]{40})$/m)?.[1]
-  if (!sourceSha) throw new Error('P16_SOURCE_REVISION_MARKER_INVALID')
 
   const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
     cwd: projectRoot,
@@ -41,7 +66,10 @@ export default async function runRegisteredSoakScenarios() {
     throw new Error(`P16_IMPLEMENTATION_SOURCE_DIRTY:${dirtyPaths.length}`)
   }
 
-  const stateDir = resolve(process.env.RUNNER_TEMP || implementationDir, 'p16-soak-matrix-state')
+  const stateDir = createMatrixStateDir({
+    runnerTemp: process.env.RUNNER_TEMP,
+    implementationDir,
+  })
   const runDir = resolve(stateDir, 'runs')
   mkdirSync(runDir, { recursive: true })
   const scenarioIds = Array.from({ length: 36 }, (_, index) => `S${String(index + 1).padStart(3, '0')}`)
