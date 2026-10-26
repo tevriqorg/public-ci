@@ -173,8 +173,10 @@ def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatc
     assert _files_containing(asset_root, canary) == []
 
 
-def test_component_ten_minute_derivation_stays_within_time_memory_and_storage_bounds(tmp_path: Path):
-    """Run real derivation on bounded synthetic long media and check resource envelope."""
+def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
+    tmp_path: Path, monkeypatch,
+):
+    """Run long media and large transcript through their real local pipelines."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S035 requires ffmpeg/ffprobe; scenario cannot be a skip")
     raw = tmp_path / "synthetic-10m.mkv"
@@ -182,6 +184,7 @@ def test_component_ten_minute_derivation_stays_within_time_memory_and_storage_bo
     source = probe_source(raw)
     assert source.duration_seconds is not None and source.duration_seconds >= 599
 
+    raw_sha256 = hashlib.sha256(raw.read_bytes()).hexdigest()
     paths = DerivationPaths(raw=raw, root=tmp_path / "derived-10m")
     started = time.monotonic()
     result = run_derivation(paths, DerivationPlan(has_audio=True),
@@ -199,6 +202,47 @@ def test_component_ten_minute_derivation_stays_within_time_memory_and_storage_bo
     assert len(frame_rows) == result["frame_count"]
     assert frame_rows[0]["source_pts_seconds"] >= 0
     assert frame_rows[-1]["source_pts_seconds"] >= 590
+
+    # Exercise the production transcript CLI, bounded-memory VAD and JSON ASR
+    # adapter over all 10 minutes of derived audio. The offline fixture backend
+    # emits one valid timestamped segment per second without network access.
+    asr_command = tmp_path / "synthetic-long-audio-asr.py"
+    asr_command.write_text(
+        "import json, sys\n"
+        "regions = json.loads(sys.argv[1])['regions']\n"
+        "end = max(region['end_ms'] for region in regions)\n"
+        "rows = [{'start_ms': start, 'end_ms': min(start + 200, end), "
+        "'text': f'segment-{start // 1000}', 'confidence': 0.9} "
+        "for start in range(0, end, 1000)]\n"
+        "print(json.dumps(rows))\n",
+        encoding="utf-8",
+    )
+    status_path = paths.root / "status.json"
+    status_path.write_text(json.dumps({
+        "asset_id": paths.root.name,
+        "state": "derived",
+        "stages": {"web": "done", "frames": "done", "audio": "done",
+                   "transcript": "idle"},
+    }), encoding="utf-8")
+    from media_derivation.transcribe_cli import main as transcribe_main
+    transcript_started = time.monotonic()
+    monkeypatch.setattr(sys, "argv", [
+        "p16-media-transcribe", "--asset-root", str(tmp_path),
+        "--asset-id", paths.root.name, "--local-asr-command", sys.executable,
+        str(asr_command),
+    ])
+    assert transcribe_main() == 0
+    transcript_elapsed = time.monotonic() - transcript_started
+    assert transcript_elapsed < 60
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    transcript_path = paths.root / "transcript" / "transcript.json"
+    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    assert status["state"] == "derived"
+    assert status["stages"]["transcript"] == "done"
+    assert status["transcript"]["segments"] == len(transcript["segments"]) >= 590
+    assert transcript["segments"][-1]["end_ms"] >= 590_000
+    assert raw.is_file() and hashlib.sha256(raw.read_bytes()).hexdigest() == raw_sha256
 
     peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     peak_bytes = peak if sys.platform == "darwin" else peak * 1024

@@ -248,15 +248,18 @@ def registry():
             cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
         # real injection and independent oracles. S032's ledger test does not
-        # inspect canonical history; S019/022/027/035 have catalog subcases
-        # their current component tests do not execute. Component tests cannot
-        # turn a broader scenario green.
+        # inspect canonical history; S019/022/027 component tests omit catalog
+        # subcases, while S028/029/030/036 still lack their system-level or
+        # multi-stage oracles. Component tests cannot turn broader scenarios green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),
         'S034': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S035': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_media_derivation_integration.py::test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded'],
+            cwd=ROOT/'implementation',timeout_seconds=240),
     }
 
 
