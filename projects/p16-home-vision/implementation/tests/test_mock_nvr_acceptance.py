@@ -436,3 +436,94 @@ def test_s001_two_camera_closed_day_archives_only_closed_segments(session, tmp_p
     assert all((volume_root / asset.relative_path).read_bytes() == payload for asset in assets)
     assert mock_nvr.search_count == 6
     assert mock_nvr.download_count == 2
+
+
+def test_s002_cross_midnight_growth_waits_for_stable_closed_day_scans(session, tmp_path, monkeypatch):
+    """S002: do not archive a growing cross-midnight clip before a stable closed day."""
+    payload = _synthetic_video(tmp_path / "s002-synthetic.mp4")
+    actual_now = datetime.now(timezone.utc)
+    today = datetime.combine(actual_now.date(), time.min, tzinfo=timezone.utc)
+    start_day = today - timedelta(days=2)
+    crossing_day = start_day + timedelta(days=1)
+    source_start = start_day + timedelta(hours=23, minutes=58)
+    partial_end = start_day + timedelta(hours=23, minutes=59, seconds=30)
+    final_end = crossing_day + timedelta(minutes=2)
+    nvr = NvrDevice(id="s002-nvr", name="S002 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s002-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S002 synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    volume_root = tmp_path / "s002-volume"
+    session.add(StorageVolume(
+        id="s002-volume", node_id="ci-fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    ))
+    session.flush()
+
+    partial = MockRecording("101", source_start, partial_end, payload)
+    final = MockRecording("101", source_start, final_end, payload)
+    with MockHikvisionNvr([partial]) as mock_nvr:
+        with _client(mock_nvr) as client:
+            def scan(scan_id):
+                result = scan_camera_range(
+                    session, nvr=nvr, camera=camera,
+                    query_start=start_day - timedelta(days=1),
+                    query_end=final_end + timedelta(days=1),
+                    searcher=client, scan_id=scan_id,
+                    scan_min_date=actual_now.date() - timedelta(days=4),
+                )
+                assert (result.state, result.discovered_count) == ("success", 1)
+                session.commit()
+                return result
+
+            first_scan = scan("s002-scan-partial")
+            source = session.scalar(select(SourceRecording).where(SourceRecording.nvr_id == nvr.id))
+            assert source is not None
+            source_id = source.id
+            before_midnight = enqueue_closed_day_backlog(
+                session, nvr_id=nvr.id,
+                now=start_day + timedelta(days=0, hours=23, minutes=59, seconds=45),
+                enabled=True, timezone_verified=True,
+            )
+            assert before_midnight.eligible_count == 0
+            assert first_scan.scan_id == source.last_scan_id
+            assert session.scalar(select(ArchiveJob).where(
+                ArchiveJob.source_recording_id == source_id)) is None
+
+            mock_nvr.recordings[:] = [final]
+            second_scan = scan("s002-scan-final-first-observation")
+            session.refresh(source)
+            assert source.id == source_id
+            assert source.source_end.replace(tzinfo=timezone.utc) == final_end
+            after_crossing = enqueue_closed_day_backlog(
+                session, nvr_id=nvr.id,
+                now=crossing_day + timedelta(minutes=3),
+                enabled=True, timezone_verified=True,
+            )
+            assert after_crossing.eligible_count == 0
+            assert session.scalar(select(ArchiveJob).where(
+                ArchiveJob.source_recording_id == source_id)) is None
+
+            third_scan = scan("s002-scan-final-stable")
+            assert second_scan.scan_id != third_scan.scan_id
+            closed = enqueue_closed_day_backlog(
+                session, nvr_id=nvr.id, now=actual_now,
+                enabled=True, timezone_verified=True,
+            )
+            assert closed.eligible_count == 1
+            assert closed.queue_result is not None and len(closed.queue_result.queued) == 1
+            job_id = closed.queue_result.queued[0]
+            monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+            processed = archive_worker.process_one(
+                session, client, probe=FfprobeMediaProbe(), worker_id="s002-worker")
+            assert processed == job_id
+            job = session.get(ArchiveJob, job_id)
+            assert job is not None and job.state == "completed"
+
+    asset = session.scalar(select(LocalAsset).where(LocalAsset.source_recording_id == source_id))
+    assert asset is not None and asset.verification_state == "verified"
+    assert asset.sha256 == hashlib.sha256(payload).hexdigest()
+    assert (volume_root / asset.relative_path).read_bytes() == payload
+    assert mock_nvr.search_count == 4
+    assert mock_nvr.download_count == 1
