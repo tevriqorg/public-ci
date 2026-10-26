@@ -317,7 +317,7 @@ def test_s027_git_secret_oracle_canary_detects_worktree_index_history_and_untrac
 
 
 def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
 ):
     """Run long media and large transcript through their real local pipelines."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
@@ -367,14 +367,15 @@ def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
         "stages": {"web": "done", "frames": "done", "audio": "done",
                    "transcript": "idle"},
     }), encoding="utf-8")
-    from media_derivation.transcribe_cli import main as transcribe_main
     transcript_started = time.monotonic()
-    monkeypatch.setattr(sys, "argv", [
-        "p16-media-transcribe", "--asset-root", str(tmp_path),
-        "--asset-id", paths.root.name, "--local-asr-command", sys.executable,
-        str(asr_command),
-    ])
-    assert transcribe_main() == 0
+    transcription = subprocess.run(
+        [sys.executable, "-m", "media_derivation.transcribe_cli",
+         "--asset-root", str(tmp_path), "--asset-id", paths.root.name,
+         "--local-asr-command", sys.executable, str(asr_command)],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, check=False, timeout=60,
+    )
+    assert transcription.returncode == 0, transcription.stderr[-2000:]
     transcript_elapsed = time.monotonic() - transcript_started
     assert transcript_elapsed < 60
 
