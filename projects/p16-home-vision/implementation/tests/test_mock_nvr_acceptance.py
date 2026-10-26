@@ -631,15 +631,23 @@ def test_s036_optional_stage_failures_preserve_verified_archive(
     status_path.write_text(json.dumps(derived_status), encoding="utf-8")
 
     asr_failure = tmp_path / "s036-asr-fail.py"
-    asr_failure.write_text("import sys\nsys.exit(23)\n", encoding="utf-8")
+    asr_child_marker = tmp_path / "s036-asr-child-started"
+    asr_failure.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "Path(sys.argv[1]).write_text('started', encoding='utf-8')\n"
+        "sys.exit(23)\n",
+        encoding="utf-8",
+    )
     asr_started = datetime.now(timezone.utc)
     asr = subprocess.run(
         [sys.executable, "-m", "media_derivation.transcribe_cli",
          "--asset-root", str(tmp_path), "--asset-id", derivation_root.name,
-         "--local-asr-command", sys.executable, str(asr_failure)],
+         "--local-asr-command", sys.executable, str(asr_failure), str(asr_child_marker)],
         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, check=False, timeout=30,
     )
     assert asr.returncode == 1
+    assert asr_child_marker.read_text(encoding="utf-8") == "started"
     asr_status = json.loads(status_path.read_text(encoding="utf-8"))
     assert asr_status["state"] == "derived"
     assert asr_status["stages"]["transcript"] == "failed"
