@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import math
+import shutil
 import struct
 import subprocess
 from dataclasses import asdict, dataclass
@@ -42,6 +43,34 @@ class Transcript:
 
 class LocalASR(Protocol):
     def transcribe(self, wav_path: Path, regions: tuple[SpeechRegion, ...]) -> tuple[TranscriptSegment, ...]: ...
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _configured_file(token: str, *, executable: bool = False) -> Path | None:
+    """Resolve path arguments defensively, including PATH-based executables."""
+    try:
+        candidate = Path(token)
+        if candidate.is_file():
+            return candidate
+    except (OSError, TypeError, ValueError):
+        return None
+    if executable:
+        try:
+            resolved = shutil.which(token)
+            if resolved:
+                path = Path(resolved)
+                if path.is_file():
+                    return path
+        except (OSError, TypeError, ValueError):
+            return None
+    return None
 
 
 def detect_speech_regions(
@@ -133,14 +162,22 @@ class JsonCommandASR:
         # while keeping local filesystem details out of transcript evidence.
         fingerprints = []
         for position, token in enumerate(command):
-            candidate = Path(token)
-            if candidate.is_file():
+            candidate = _configured_file(token, executable=(position == 0))
+            if candidate is not None:
                 fingerprints.append({
                     "position": position,
                     "name": candidate.name,
-                    "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                    "sha256": _sha256_file(candidate),
                 })
-        identity = json.dumps(fingerprints, sort_keys=True, separators=(",", ":")).encode()
+        # Command arguments can select a model/revision without referring to a
+        # local file (for example ``--model synthetic-small``). Include their
+        # digest so distinct configurations cannot share provenance, while
+        # keeping potentially sensitive values out of transcript evidence.
+        arguments = json.dumps(list(command), separators=(",", ":")).encode()
+        identity = json.dumps({
+            "arguments_sha256": hashlib.sha256(arguments).hexdigest(),
+            "files": fingerprints,
+        }, sort_keys=True, separators=(",", ":")).encode()
         self.pipeline_version = "sha256:" + hashlib.sha256(identity).hexdigest()
 
     def transcribe(self, wav_path: Path, regions: tuple[SpeechRegion, ...]) -> tuple[TranscriptSegment, ...]:

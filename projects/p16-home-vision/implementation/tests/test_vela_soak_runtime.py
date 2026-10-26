@@ -243,11 +243,20 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             first, survivor = EvidenceStore(d), EvidenceStore(d)
             import sqlite3
+            marker = Path(d) / ".publication-pending"
+            marker.touch()
+            try:
+                with sqlite3.connect(first.index_path) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    first._append_locked(record(), db)
+                    raise RuntimeError("SIMULATED_CRASH_BEFORE_INDEX_COMMIT")
+            except RuntimeError as exc:
+                self.assertEqual(str(exc), "SIMULATED_CRASH_BEFORE_INDEX_COMMIT")
             with sqlite3.connect(first.index_path) as db:
-                first._append_locked(record(), db)
-            (Path(d) / ".publication-pending").touch()
+                self.assertEqual(db.execute("SELECT count(*) FROM runs").fetchone()[0], 0)
             with self.assertRaisesRegex(ValueError, "DUPLICATE_RUN_ID"):
                 survivor.append(record(status="PASS"))
+            self.assertEqual(survivor.records(), [record()])
             survivor.append(record(run_id="recovered", status="PASS", recovery_of="original"))
             self.assertEqual(len(EvidenceStore(d).records()), 2)
 

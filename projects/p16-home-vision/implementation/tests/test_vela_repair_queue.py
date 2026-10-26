@@ -8,12 +8,74 @@ import ipaddress
 import json
 import os
 import socket
+import subprocess
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from p16_soak import enqueue_failures, main, registry
+from p16_soak import enqueue_failures, main, registry, verify_source_revision
 
 class RepairQueueTests(unittest.TestCase):
+    def test_source_revision_requires_matching_clean_code_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            code=root/'implementation'/'scripts'/'runner.py'
+            code.parent.mkdir(parents=True)
+            code.write_text('print("fixture")\n')
+            subprocess.run(['git','init','-q'],cwd=root,check=True)
+            subprocess.run(['git','config','user.name','P16 fixture'],cwd=root,check=True)
+            subprocess.run(['git','config','user.email','p16-fixture@example.invalid'],cwd=root,check=True)
+            subprocess.run(['git','add','implementation/scripts/runner.py'],cwd=root,check=True)
+            subprocess.run(['git','commit','-qm','fixture'],cwd=root,check=True)
+            sha=subprocess.run(['git','rev-parse','HEAD'],cwd=root,check=True,
+                               capture_output=True,text=True).stdout.strip()
+            self.assertEqual(verify_source_revision(root,sha),sha)
+            with self.assertRaisesRegex(ValueError,'SOURCE_SHA_DOES_NOT_MATCH_CHECKOUT'):
+                verify_source_revision(root,'a'*40)
+            code.write_text('print("mutated")\n')
+            with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                verify_source_revision(root,sha)
+            code.write_text('print("fixture")\n')
+            extra=root/'implementation'/'tests'/'untracked.py'
+            extra.parent.mkdir(parents=True)
+            extra.write_text('pass\n')
+            with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                verify_source_revision(root,sha)
+
+            mirror=root/'mirror'
+            project=mirror/'projects'/'p16-home-vision'
+            project_code=project/'implementation'/'scripts'/'runner.py'
+            project_code.parent.mkdir(parents=True)
+            project_code.write_text('print("mirrored fixture")\n')
+            (project/'SOURCE_REVISION').write_text('b'*40+'\n')
+            subprocess.run(['git','init','-q'],cwd=mirror,check=True)
+            subprocess.run(['git','config','user.name','P16 fixture'],cwd=mirror,check=True)
+            subprocess.run(['git','config','user.email','p16-fixture@example.invalid'],cwd=mirror,check=True)
+            subprocess.run(['git','add','projects/p16-home-vision'],cwd=mirror,check=True)
+            subprocess.run(['git','commit','-qm','mirror fixture'],cwd=mirror,check=True)
+            self.assertEqual(verify_source_revision(project,'b'*40),'b'*40)
+            project_code.write_text('print("changed mirror")\n')
+            with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                verify_source_revision(project,'b'*40)
+
+    def test_cli_refuses_source_mismatch_before_state_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            state=Path(d)/'state'
+            with patch('p16_soak.verify_source_revision',
+                       side_effect=ValueError('SOURCE_SHA_DOES_NOT_MATCH_CHECKOUT')):
+                with self.assertRaises(SystemExit) as raised:
+                    main(['once','--state',str(state),'--source-sha','a'*40])
+            self.assertEqual(raised.exception.code,2)
+            self.assertFalse(state.exists())
+
+    def test_cycle_rechecks_source_and_records_no_results_after_change(self):
+        with tempfile.TemporaryDirectory() as d:
+            state=Path(d)/'state'
+            with patch('p16_soak.verify_source_revision',
+                       side_effect=['a'*40, ValueError('SOURCE_TREE_DIRTY')]):
+                with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
+                    main(['once','--state',str(state),'--source-sha','a'*40])
+            self.assertEqual(list((state/'runs').glob('*.json')),[])
+
     def test_repeated_failures_deduplicate_task_preserve_observations_and_pass_does_not_close(self):
         with tempfile.TemporaryDirectory() as d:
             base=dict(scenario_id='S014',seed='fixture',source_sha='a'*40,status='FAIL')
@@ -107,7 +169,8 @@ class RepairQueueTests(unittest.TestCase):
             link=Path(d)/'link'
             link.symlink_to(target, target_is_directory=True)
             with self.assertRaises(SystemExit) as raised:
-                main(['once','--state',str(link),'--source-sha','a'*40])
+                with patch('p16_soak.verify_source_revision',return_value='a'*40):
+                    main(['once','--state',str(link),'--source-sha','a'*40])
             self.assertEqual(raised.exception.code,2)
             self.assertEqual(list(target.iterdir()),[])
 
@@ -116,7 +179,8 @@ class RepairQueueTests(unittest.TestCase):
             state=Path(d)/'state-file'
             state.write_text('preserve')
             with self.assertRaises(SystemExit) as raised:
-                main(['once','--state',str(state),'--source-sha','a'*40])
+                with patch('p16_soak.verify_source_revision',return_value='a'*40):
+                    main(['once','--state',str(state),'--source-sha','a'*40])
             self.assertEqual(raised.exception.code,2)
             self.assertEqual(state.read_text(),'preserve')
 
@@ -131,7 +195,8 @@ class RepairQueueTests(unittest.TestCase):
                                     'seed':'p16-g0-v1-S014','source_sha':source_sha,
                                     'status':'PASS'}], 'complete':True}
             with patch('p16_soak.registry', return_value={'S014':object()}), \
-                 patch('p16_soak.run_scenario', side_effect=fake_scenario):
+                 patch('p16_soak.run_scenario', side_effect=fake_scenario), \
+                 patch('p16_soak.verify_source_revision',return_value='a'*40):
                 self.assertEqual(main(['scenario','--scenario-id','S014','--state',d,
                                        '--source-sha','a'*40]), 0)
             self.assertEqual(seen, ['S014'])
@@ -202,6 +267,7 @@ class RepairQueueTests(unittest.TestCase):
             with patch.dict(os.environ,env,clear=False), \
                  patch('socket.socket',AuditedSocket), \
                  patch('p16_soak.registry',return_value={'S026':handler}), \
+                 patch('p16_soak.verify_source_revision',return_value='a'*40), \
                  contextlib.redirect_stdout(output):
                 self.assertEqual(main(['scenario','--scenario-id','S026','--state',str(state),
                                        '--source-sha','a'*40]),0)
@@ -243,6 +309,7 @@ class RepairQueueTests(unittest.TestCase):
             low_disk=lambda _path: SimpleNamespace(total=10,used=5,free=6*1024**3-1)
             with patch('p16_soak.registry',return_value={'S029':handler}), \
                  patch.object(shutil,'disk_usage',side_effect=low_disk), \
+                 patch('p16_soak.verify_source_revision',return_value='a'*40), \
                  contextlib.redirect_stdout(output):
                 code=main(['scenario','--scenario-id','S029','--state',str(state),
                            '--source-sha','a'*40])

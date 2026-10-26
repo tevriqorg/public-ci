@@ -6,11 +6,58 @@ import re
 import sqlite3
 import sys
 import shutil
+import subprocess
 from pathlib import Path
 from vela_soak_runtime import EvidenceStore, command_handler, continuous, digest, run_cycle, run_scenario
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def verify_source_revision(root, source_sha):
+    """Require the evidence revision to identify this clean executable tree."""
+    root = Path(root)
+    try:
+        repository = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("SOURCE_REVISION_UNAVAILABLE") from None
+    repository = Path(repository).resolve()
+    root = root.resolve()
+    prefix = root.relative_to(repository).as_posix()
+    prefix = "" if prefix == "." else prefix + "/"
+    mapped_revision = root / "SOURCE_REVISION"
+    expected_revision = head
+    if mapped_revision.is_file():
+        try:
+            expected_revision = mapped_revision.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError):
+            raise ValueError("SOURCE_REVISION_UNAVAILABLE") from None
+    if expected_revision != source_sha:
+        raise ValueError("SOURCE_SHA_DOES_NOT_MATCH_CHECKOUT")
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=root, check=True, capture_output=True, text=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("SOURCE_REVISION_UNAVAILABLE") from None
+    for line in status.splitlines():
+        path = line[3:]
+        implementation = prefix + "implementation/"
+        catalog = prefix + "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json"
+        revision_marker = prefix + "SOURCE_REVISION"
+        if path == implementation + ".tmp" or path.startswith(implementation + ".tmp/"):
+            continue
+        if path.startswith(implementation) or path in (catalog, revision_marker):
+            raise ValueError("SOURCE_TREE_DIRTY")
+    return expected_revision
 
 
 def _validate_failure(record):
@@ -95,7 +142,7 @@ def registry():
             'tests/test_mock_nvr_acceptance.py::test_s003_three_day_two_camera_backfill_has_no_archive_omissions'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         'S004': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_mock_nvr_acceptance.py::test_s001_two_camera_closed_day_archives_only_closed_segments'],
+            'tests/test_mock_nvr_acceptance.py::test_simulated_nvr_closed_day_scan_retry_and_verified_archive'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         'S005': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_mock_nvr_acceptance.py::test_simulated_nvr_closed_day_scan_retry_and_verified_archive'],
@@ -215,6 +262,10 @@ def main(argv=None):
         p.error('--scenario-id is valid only in scenario mode')
     if a.mode=='continuous' and a.interval < 1:
         p.error('--interval must be positive')
+    try:
+        verify_source_revision(ROOT, a.source_sha)
+    except ValueError as exc:
+        p.error(str(exc))
     # Refuse a symlinked state root: all evidence and queue writes must stay
     # inside the caller-selected isolated UAT tree.
     state_path = a.state.absolute()
@@ -240,6 +291,9 @@ def main(argv=None):
     def guard():
         resource_guard(a.state)
     def cycle():
+        # Continuous mode must never tag code changed between cycles with an
+        # older source revision.
+        verify_source_revision(ROOT, a.source_sha)
         if a.mode == 'scenario':
             result=run_scenario(catalog,a.scenario_id,handlers,store,
                                 source_sha=a.source_sha,guard=guard)

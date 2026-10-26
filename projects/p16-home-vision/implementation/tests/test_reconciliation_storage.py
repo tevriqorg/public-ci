@@ -110,3 +110,34 @@ def test_s012_reports_storage_ledger_mismatches_without_mutating_rows_or_files(
     repeated = reconcile_storage_files(session)
     assert repeated == result
     assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_s012_reports_unreadable_recordings_subtree_instead_of_clean_result(
+    session, tmp_path: Path, monkeypatch
+):
+    nvr = NvrDevice(id="s012-unreadable-nvr", name="S012 synthetic", host="127.0.0.1")
+    session.add(nvr)
+    session.add(StorageVolume(
+        id="s012-unreadable-volume", node_id="fixture",
+        mount_path_runtime=str(tmp_path), total_bytes=1024**4,
+        free_bytes=900 * 1024**3, online=True, writable=True,
+    ))
+    session.flush()
+    blocked = tmp_path / "recordings" / "unreadable-camera"
+    blocked.mkdir(parents=True)
+    (blocked / "untracked.mp4").write_bytes(b"synthetic hidden media")
+
+    def walk_with_permission_fault(top, *, onerror, followlinks):
+        assert Path(top) == tmp_path / "recordings"
+        error = PermissionError(13, "synthetic permission fault", str(blocked))
+        onerror(error)
+        yield str(top), [blocked.name], []
+
+    monkeypatch.setattr("app.domain.reconciliation.os.walk", walk_with_permission_fault)
+    result = reconcile_storage_files(session)
+
+    assert not result.clean
+    assert {
+        (finding.code, finding.relative_path)
+        for finding in result.findings
+    } == {("RECORDINGS_SUBTREE_UNREADABLE", "recordings/unreadable-camera")}

@@ -1,10 +1,12 @@
 import json
 import hashlib
+import os
 import struct
 import sys
 import wave
 from pathlib import Path
 
+from media_derivation.local_speech import JsonCommandASR
 from media_derivation.transcribe_cli import main
 
 
@@ -120,3 +122,65 @@ def test_s021_same_basename_wrapper_revision_is_persisted_as_transcript_provenan
     assert first_status_version != second_status_version
     assert first_text == "model-a"
     assert second_text == "model-b"
+
+
+def test_asr_fingerprints_path_resolved_wrapper_and_streams_model_files(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "p16-synthetic-asr"
+    wrapper.write_text("#!/bin/sh\nprintf '[]\\n'\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    model = tmp_path / "synthetic-model.bin"
+    with model.open("wb") as handle:
+        for _ in range(4):
+            handle.write(b"m" * 1024 * 1024)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    read_sizes = []
+    original_open = Path.open
+
+    class ReadTracker:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def read(self, size=-1):
+            read_sizes.append(size)
+            return self.handle.read(size)
+
+    def tracked_open(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        return ReadTracker(handle) if path == model or path == wrapper else handle
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+    command = (wrapper.name, "--model", "synthetic-small", str(model), "--device", "cpu")
+    first = JsonCommandASR(command, backend_id="synthetic-asr")
+    assert first.pipeline_version.startswith("sha256:")
+    assert read_sizes and max(read_sizes) <= 1024 * 1024
+
+    with original_open(wrapper, "w", encoding="utf-8") as handle:
+        handle.write("#!/bin/sh\nprintf '[ ]\\n'\n")
+    second = JsonCommandASR(command, backend_id="synthetic-asr")
+    assert first.pipeline_version != second.pipeline_version
+
+
+def test_asr_fingerprint_covers_non_file_configuration_without_persisting_arguments():
+    first = JsonCommandASR(
+        (sys.executable, "--model", "synthetic-model-revision-a"),
+        backend_id="synthetic-asr",
+    )
+    second = JsonCommandASR(
+        (sys.executable, "--model", "synthetic-model-revision-b"),
+        backend_id="synthetic-asr",
+    )
+
+    assert first.pipeline_version.startswith("sha256:")
+    assert second.pipeline_version.startswith("sha256:")
+    assert first.pipeline_version != second.pipeline_version
+    assert "synthetic-model-revision-a" not in first.pipeline_version
+    assert "synthetic-model-revision-b" not in second.pipeline_version

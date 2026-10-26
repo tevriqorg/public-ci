@@ -8,13 +8,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.archive_pipeline import ArchiveValidationError, verify_part
-from app.domain.archive_queue import retry_due_archive_jobs, retry_failed_archive_jobs
+from app.domain.archive_queue import enqueue_archive_jobs, retry_due_archive_jobs, retry_failed_archive_jobs
 from app.domain.auto_archive import enqueue_closed_day_backlog
 from app.domain.analysis_contract import AnalysisRequest, ModelRunnerError
 from analysis_worker.model_runner import FailingFixtureModelRunner
@@ -64,7 +65,7 @@ def _client(nvr: MockHikvisionNvr) -> HikvisionIsapiClient:
 
 
 def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_path, monkeypatch):
-    """Exercise real HTTP/Digest, scan, closed-day enqueue, retry and ffprobe promotion."""
+    """S004/S005: repeat discovery/enqueue, inject an archived-asset guard mutant, retry."""
     payload = _synthetic_video(tmp_path / "synthetic.mp4")
     now = datetime.now(timezone.utc)
     today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
@@ -168,6 +169,40 @@ def test_simulated_nvr_closed_day_scan_retry_and_verified_archive(session, tmp_p
     assert not final_path.with_suffix(final_path.suffix + ".part").exists()
     probed = FfprobeMediaProbe().probe(final_path)
     assert probed.has_video and probed.duration_ms == pytest.approx(3000, abs=150)
+    assert session.query(LocalAsset).filter_by(source_recording_id=old_source.id).count() == 1
+
+    # C3 canary: removing the verified-asset lookup would make a completed
+    # source eligible for a second job. Keep that mutation inside a rollback
+    # boundary, and compare it to the independent DB cardinality oracle.
+    original_scalar = session.scalar
+
+    def omit_verified_asset_lookup(statement, *args, **kwargs):
+        descriptions = getattr(statement, "column_descriptions", ())
+        if descriptions and descriptions[0].get("entity") is LocalAsset:
+            return None
+        return original_scalar(statement, *args, **kwargs)
+
+    nested = session.begin_nested()
+    try:
+        with patch.object(session, "scalar", side_effect=omit_verified_asset_lookup):
+            mutant = enqueue_archive_jobs(session, [old_source.id])
+            session.flush()
+            mutant_job_count = session.query(ArchiveJob).filter_by(
+                source_recording_id=old_source.id
+            ).count()
+            asset_count = session.query(LocalAsset).filter_by(
+                source_recording_id=old_source.id
+            ).count()
+        assert mutant.queued and mutant_job_count == 2 and asset_count == 1
+        assert asset_count == 1  # already archived, so another job is invalid
+    finally:
+        nested.rollback()
+
+    session.expire_all()
+    actual = enqueue_archive_jobs(session, [old_source.id])
+    session.flush()
+    assert actual.already_archived == (old_source.id,)
+    assert session.query(ArchiveJob).filter_by(source_recording_id=old_source.id).count() == 1
     assert session.query(LocalAsset).filter_by(source_recording_id=old_source.id).count() == 1
     assert "fixture-password" not in repr(old_source)
     assert all("fixture-password" not in (event.payload_redacted or "") for event in session.query(AuditEvent).all())

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -135,19 +136,54 @@ def reconcile_storage_files(session: Session) -> StorageReconciliationResult:
         if recordings.is_symlink():
             findings.append(StorageFinding("RECORDINGS_ROOT_SYMLINK", volume_id, "recordings"))
             continue
+        try:
+            recordings.stat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            findings.append(StorageFinding(
+                "RECORDINGS_ROOT_UNREADABLE", volume_id, "recordings"
+            ))
+            continue
         if not recordings.is_dir():
             continue
-        for path in recordings.rglob("*.mp4"):
-            if path.is_symlink():
-                findings.append(StorageFinding(
-                    "MEDIA_FILE_SYMLINK", volume_id, path.relative_to(root).as_posix()
-                ))
-                continue
-            if not path.is_file():
-                continue
-            relative_path = path.relative_to(root).as_posix()
-            if not by_location.get((volume_id, relative_path)):
-                findings.append(StorageFinding("FILE_ONLY_MEDIA", volume_id, relative_path))
+
+        def report_walk_error(exc: OSError) -> None:
+            filename = getattr(exc, "filename", None)
+            try:
+                relative = Path(filename).relative_to(root).as_posix() if filename else "recordings"
+            except (TypeError, ValueError):
+                relative = "recordings"
+            findings.append(StorageFinding(
+                "RECORDINGS_SUBTREE_UNREADABLE", volume_id, relative
+            ))
+
+        for directory, subdirectories, filenames in os.walk(
+            recordings, onerror=report_walk_error, followlinks=False
+        ):
+            current = Path(directory)
+            for name in tuple(subdirectories):
+                child = current / name
+                if child.is_symlink():
+                    subdirectories.remove(name)
+                    findings.append(StorageFinding(
+                        "RECORDINGS_SUBTREE_SYMLINK", volume_id,
+                        child.relative_to(root).as_posix(),
+                    ))
+            for name in filenames:
+                if Path(name).suffix.lower() != ".mp4":
+                    continue
+                path = current / name
+                if path.is_symlink():
+                    findings.append(StorageFinding(
+                        "MEDIA_FILE_SYMLINK", volume_id, path.relative_to(root).as_posix()
+                    ))
+                    continue
+                if not path.is_file():
+                    continue
+                relative_path = path.relative_to(root).as_posix()
+                if not by_location.get((volume_id, relative_path)):
+                    findings.append(StorageFinding("FILE_ONLY_MEDIA", volume_id, relative_path))
 
     for asset in assets:
         if asset.storage_volume_id not in volumes:

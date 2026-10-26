@@ -1,1 +1,4 @@
-9302a59fa2a32556ab6297471712a1e83443d7a8
+repository=tevriqorg/P16-Home-Vision
+branch=test/p16r2-vela-15d-soak
+commit=133799c0ef953dedd09cfb0c0c4944dad9e2db5a
+copied_paths=implementation/
