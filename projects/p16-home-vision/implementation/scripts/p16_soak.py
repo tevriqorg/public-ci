@@ -137,6 +137,9 @@ def registry():
         'S030': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_soak_runtime.py::RuntimeTests::test_s030_bug_reproducer_recovery_and_adjacent_regression_are_immutable'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S031': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_mutant_is_killed'],
+            cwd=ROOT/'implementation',timeout_seconds=90),
     }
 
 
