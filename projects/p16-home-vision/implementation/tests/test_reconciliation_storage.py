@@ -437,6 +437,13 @@ def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path
     }
     assert not missing_path.exists()
     assert untracked_path.read_bytes() == untracked_bytes
+    assert chain_path.read_bytes() == chain_bytes
+    assert verify_chain(chain_path.read_bytes()) == initial_chain_hashes
+    drift_summary = json.loads(summary_path.read_bytes())
+    assert summary_path.read_bytes() == summary_bytes
+    assert drift_summary["p95_ns"] == sorted(
+        sample["elapsed_ns"] for sample in drift_summary["samples"]
+    )[14]
     assert [
         (asset.id, asset.relative_path, asset.size_bytes, asset.sha256,
          asset.lifecycle_state, asset.verification_state)
