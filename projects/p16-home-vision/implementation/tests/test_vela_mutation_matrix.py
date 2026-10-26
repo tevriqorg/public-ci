@@ -156,6 +156,105 @@ def test_s031_future_ending_video_canary_rejects_cutoff_mutant(session):
     reject_future_source(actual_result, actual_jobs)
 
 
+def test_s031_incorrect_hash_canary_rejects_digest_mutant(tmp_path, monkeypatch):
+    """A wrong digest returned by the production verifier cannot satisfy file truth."""
+    from app.domain import archive_pipeline
+    from app.infra.media.ffprobe import MediaProbeResult
+
+    payload = b"synthetic verified video bytes" * 64
+    part = tmp_path / "hash-canary.mp4.part"
+    part.write_bytes(payload)
+
+    class SyntheticProbe:
+        def probe(self, path):
+            return MediaProbeResult(
+                container="mp4", video_codec="h264", audio_codec=None,
+                width=16, height=16, duration_ms=180_000, has_video=True,
+            )
+
+    expected = hashlib.sha256(payload).hexdigest()
+    original_digest = archive_pipeline.sha256_file
+
+    def assert_file_hash_matches_product(digest):
+        assert digest == hashlib.sha256(part.read_bytes()).hexdigest()
+
+    # Kill a concrete product mutation at its digest boundary, then prove the
+    # same file is accepted by the unmodified production verifier.
+    monkeypatch.setattr(archive_pipeline, "sha256_file", lambda _path: "0" * 64)
+    with pytest.raises(AssertionError):
+        actual, _, _ = verify_part(
+            part, expected_duration_ms=180_000, probe=SyntheticProbe(),
+        )
+        assert_file_hash_matches_product(actual)
+
+    monkeypatch.setattr(archive_pipeline, "sha256_file", original_digest)
+    actual, media, size = verify_part(
+        part, expected_duration_ms=180_000, probe=SyntheticProbe(),
+    )
+    assert_file_hash_matches_product(actual)
+    assert actual == expected
+    assert media.has_video and size == len(payload)
+
+
+def test_s031_duplicate_enqueue_canary_rejects_missing_active_job_guard(session):
+    """A duplicate-active-job mutation is caught by persisted queue truth."""
+    from sqlalchemy import delete
+    from app.domain import archive_queue
+
+    day = datetime.now(timezone.utc).date() - timedelta(days=1)
+    now = datetime.combine(day, time(1), tzinfo=timezone.utc)
+    _, source = _seed_current_day_source(session, day, now)
+
+    # Establish the production invariant first: repeated enqueue yields one
+    # job and reports the source as already queued.
+    first = archive_queue.enqueue_archive_jobs(session, [source.id])
+    second = archive_queue.enqueue_archive_jobs(session, [source.id])
+    assert len(first.queued) == 1
+    assert second.already_queued == (source.id,)
+    assert session.query(ArchiveJob).filter_by(source_recording_id=source.id).count() == 1
+
+    # Inject the missing active-job lookup and remove only the synthetic DB
+    # partial index that otherwise independently masks this application bug.
+    bind = session.get_bind()
+    if bind.dialect.name != "sqlite":
+        pytest.skip("the isolated duplicate mutant is defined for local SQLite")
+    session.execute(delete(ArchiveJob).where(ArchiveJob.source_recording_id == source.id))
+    session.flush()
+    session.execute(__import__("sqlalchemy").text(
+        "DROP INDEX IF EXISTS uq_archive_jobs_one_active_per_source"
+    ))
+    original_scalar = session.scalar
+
+    class ConflictIgnoringInsert:
+        def __init__(self, table):
+            from sqlalchemy import insert
+            self.statement = insert(table)
+
+        def values(self, **values):
+            self.statement = self.statement.values(**values)
+            return self
+
+        def on_conflict_do_nothing(self, **_kwargs):
+            return self.statement
+
+    def skip_active_job_guard(statement, *args, **kwargs):
+        if ArchiveJob.__table__ in statement.get_final_froms():
+            return None
+        return original_scalar(statement, *args, **kwargs)
+
+    with patch.object(session, "scalar", side_effect=skip_active_job_guard), \
+            patch.object(archive_queue, "sqlite_insert", ConflictIgnoringInsert):
+        mutant_first = archive_queue.enqueue_archive_jobs(session, [source.id])
+        mutant_second = archive_queue.enqueue_archive_jobs(session, [source.id])
+        session.flush()
+        mutant_count = session.query(ArchiveJob).filter_by(source_recording_id=source.id).count()
+        assert mutant_first.queued and mutant_second.queued
+        with pytest.raises(AssertionError):
+            assert mutant_count == 1
+
+    session.rollback()
+
+
 def test_s033_http_200_error_xml_and_invalid_video_are_rejected(session, tmp_path):
     """Exercise both malformed-success boundaries without creating canonical rows."""
     day = datetime.now(timezone.utc).date() - timedelta(days=1)

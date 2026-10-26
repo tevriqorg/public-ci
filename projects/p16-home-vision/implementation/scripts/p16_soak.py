@@ -240,6 +240,12 @@ def registry():
         'S026': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_repair_queue.py::RepairQueueTests::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S031': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_canary_rejects_cutoff_mutant',
+            'tests/test_vela_mutation_matrix.py::test_s031_future_ending_video_canary_rejects_cutoff_mutant',
+            'tests/test_vela_mutation_matrix.py::test_s031_incorrect_hash_canary_rejects_digest_mutant',
+            'tests/test_vela_mutation_matrix.py::test_s031_duplicate_enqueue_canary_rejects_missing_active_job_guard'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
         # real injection and independent oracles. S032's ledger test does not
         # inspect canonical history; S019/022/027/035 have catalog subcases
