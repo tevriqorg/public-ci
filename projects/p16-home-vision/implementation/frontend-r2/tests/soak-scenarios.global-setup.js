@@ -52,6 +52,7 @@ export default async function runRegisteredSoakScenarios() {
         ...process.env,
         PYTHONUNBUFFERED: '1',
         P16_SOAK_WRAPPER_CHILD: '1',
+        P16_SOAK_MATRIX_CHILD: '1',
       },
     })
     if (execution.error) {

@@ -457,7 +457,11 @@ class RepairQueueTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), blocked)
 
-    def test_browser_scenarios_never_reuse_an_unrelated_dev_server(self):
+    def test_browser_replay_reuse_is_limited_to_hosted_matrix_children(self):
         config = Path(__file__).resolve().parents[1] / 'frontend-r2/playwright.config.js'
-        source = config.read_text(encoding='utf-8')
-        self.assertRegex(source, r"reuseExistingServer:\s*false")
+        config_source = config.read_text(encoding='utf-8')
+        self.assertRegex(config_source,
+                         r"reuseExistingServer:\s*process\.env\.P16_SOAK_MATRIX_CHILD === '1'")
+        setup = Path(__file__).resolve().parents[1] / 'frontend-r2/tests/soak-scenarios.global-setup.js'
+        setup_source = setup.read_text(encoding='utf-8')
+        self.assertIn("P16_SOAK_MATRIX_CHILD: '1'", setup_source)
