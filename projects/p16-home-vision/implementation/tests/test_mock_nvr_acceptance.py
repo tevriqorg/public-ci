@@ -387,8 +387,8 @@ def test_simulated_nvr_rejects_mutating_http_methods():
     assert response.status_code == 405
 
 
-def test_s036_model_timeout_does_not_block_synthetic_archive(session, tmp_path, monkeypatch):
-    """S036: fail Intelligence first, then complete the independent media archive path."""
+def test_model_runner_timeout_does_not_block_synthetic_archive(session, tmp_path, monkeypatch):
+    """ModelRunner failure leaves media archiving independent; not the S036 matrix."""
     payload = _synthetic_video(tmp_path / "s036-synthetic.mp4")
     now = datetime.now(timezone.utc)
     today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
