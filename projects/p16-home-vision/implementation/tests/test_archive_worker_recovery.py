@@ -123,3 +123,64 @@ def test_s008_cross_volume_orphan_is_adopted_without_duplicate_or_download(
     assert session.query(AuditEvent).filter_by(
         event_type="archive_orphan_recovered", entity_id=asset.id
     ).count() == 1
+
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "volume_state",
+    [
+        {"total_bytes": 2 * 1024**4, "free_bytes": 0, "online": True, "writable": True},
+        {"total_bytes": 2 * 1024**4, "free_bytes": 2 * 1024**4, "online": False, "writable": True},
+        {"total_bytes": 2 * 1024**4, "free_bytes": 2 * 1024**4, "online": True, "writable": False},
+    ],
+    ids=["zero-space", "offline", "permission-denied"],
+)
+def test_s013_storage_faults_fail_closed_without_touching_siblings(
+    session, tmp_path, monkeypatch, volume_state
+):
+    nvr = NvrDevice(id="nvr-s013", name="S013 synthetic", host="127.0.0.1")
+    camera = CameraTrack(id="camera-s013", nvr_id=nvr.id, track_id="213",
+                         camera_name="S013 synthetic")
+    source = SourceRecording(
+        id="source-s013", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=datetime(2026, 8, 27, 6, tzinfo=timezone.utc),
+        source_end=datetime(2026, 8, 27, 6, 0, 10, tzinfo=timezone.utc),
+        duration_ms=10_000, source_size_if_known=4096, source_state="available",
+    )
+    volume_root = tmp_path / "volume"
+    volume_root.mkdir()
+    volume = StorageVolume(
+        id="volume-s013", node_id="fixture", mount_path_runtime=str(volume_root),
+        **volume_state,
+    )
+    job = ArchiveJob(id="job-s013", source_recording_id=source.id, state="queued")
+    sibling = volume_root / "unrelated-sentinel.bin"
+    sibling.write_bytes(b"preserve-exact-sibling-bytes")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    session.add(source)
+    session.flush()
+    session.add(volume)
+    session.flush()
+    session.add(job)
+    session.commit()
+    monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+
+    assert archive_worker.process_one(
+        session, NoNetworkClient(), probe=FakeProbe(), worker_id="s013-fixture"
+    ) == job.id
+    failed = session.get(ArchiveJob, job.id)
+    assert failed.state == "failed"
+    assert failed.error_code == "STORAGE_NOT_READY"
+    assert session.query(LocalAsset).filter_by(source_recording_id=source.id).count() == 0
+    audits = session.query(AuditEvent).filter_by(
+        event_type="archive_attempt_failed", entity_id=job.id
+    ).all()
+    assert len(audits) == 1
+    assert '"error_code": "STORAGE_NOT_READY"' in audits[0].payload_redacted
+    assert sibling.read_bytes() == b"preserve-exact-sibling-bytes"
+    assert sorted(p.name for p in volume_root.iterdir()) == ["unrelated-sentinel.bin"]
