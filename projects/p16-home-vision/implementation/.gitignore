@@ -2,3 +2,4 @@
 frontend-r2/dist/
 frontend-r2/node_modules/
 frontend-r2/package-lock.json
+frontend-r2/*.tsbuildinfo
