@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import subprocess
 import struct
 import sys
 import wave
@@ -82,6 +83,58 @@ def test_invalid_asr_json_is_retryable_without_changing_derived_audio(tmp_path, 
     assert status["stages"] == {"web": "done", "frames": "done", "audio": "done", "transcript": "failed"}
     assert status["transcript"]["retryable"] is True
     assert status["transcript"]["attempts"] == 2
+    assert hashlib.sha256(audio.read_bytes()).hexdigest() == media_hash_before
+
+
+def test_s020_asr_timeout_is_retryable_without_changing_media(tmp_path, monkeypatch):
+    asset = _prepared_asset(tmp_path)
+    audio = asset / "audio" / "speech.wav"
+    media_hash_before = hashlib.sha256(audio.read_bytes()).hexdigest()
+    command = tmp_path / "timeout-asr.py"
+    command.write_text("pass\n")
+    monkeypatch.setattr(sys, "argv", [
+        "p16-media-transcribe", "--asset-root", str(tmp_path), "--asset-id", "asset-1",
+        "--local-asr-command", sys.executable, str(command),
+    ])
+    invocations = []
+
+    def timeout_asr(argv, **kwargs):
+        invocations.append((argv, kwargs.get("timeout")))
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+    monkeypatch.setattr("media_derivation.local_speech.subprocess.run", timeout_asr)
+    assert main() == 1
+    assert len(invocations) == 1 and invocations[0][1] == 300
+    status = json.loads((asset / "status.json").read_text())
+    assert status["state"] == "derived"
+    assert status["stages"]["web"] == "done"
+    assert status["stages"]["audio"] == "done"
+    assert status["stages"]["transcript"] == "failed"
+    assert status["transcript"]["retryable"] is True
+    assert "LOCAL_ASR_FAILED" in status["transcript"]["error"]
+    assert hashlib.sha256(audio.read_bytes()).hexdigest() == media_hash_before
+
+
+def test_s020_invalid_segment_is_rejected_and_media_stays_derived(tmp_path, monkeypatch):
+    asset = _prepared_asset(tmp_path)
+    audio = asset / "audio" / "speech.wav"
+    media_hash_before = hashlib.sha256(audio.read_bytes()).hexdigest()
+    command = tmp_path / "invalid-segment-asr.py"
+    command.write_text("print('[{\\\"start_ms\\\":400,\\\"end_ms\\\":500,\\\"text\\\":\\\"outside\\\"}]')\n")
+    monkeypatch.setattr(sys, "argv", [
+        "p16-media-transcribe", "--asset-root", str(tmp_path), "--asset-id", "asset-1",
+        "--local-asr-command", sys.executable, str(command),
+    ])
+
+    assert main() == 1
+    status = json.loads((asset / "status.json").read_text())
+    assert status["state"] == "derived"
+    assert status["stages"]["web"] == "done"
+    assert status["stages"]["audio"] == "done"
+    assert status["stages"]["transcript"] == "failed"
+    assert status["transcript"]["retryable"] is True
+    assert "ASR_SEGMENT_OUTSIDE_VAD" in status["transcript"]["error"]
+    assert not (asset / "transcript" / "transcript.json").exists()
     assert hashlib.sha256(audio.read_bytes()).hexdigest() == media_hash_before
 
 
