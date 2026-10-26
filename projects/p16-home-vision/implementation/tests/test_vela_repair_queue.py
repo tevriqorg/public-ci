@@ -217,6 +217,19 @@ class RepairQueueTests(unittest.TestCase):
                     enqueue_failures(d,batch)
                 self.assertFalse((Path(d)/'repair-queue.sqlite3').exists())
 
+    def test_persisted_failure_run_id_cannot_be_replayed_as_pass_or_blocked(self):
+        failed=dict(run_id='same-run',scenario_id='S014',seed='fixture',
+                    source_sha='a'*40,status='FAIL')
+        for status in ('PASS', 'BLOCKED'):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as d:
+                enqueue_failures(d,[failed])
+                contradictory=dict(failed,status=status)
+                with self.assertRaisesRegex(ValueError,'REPAIR_OBSERVATION_CONFLICT'):
+                    enqueue_failures(d,[contradictory])
+                with sqlite3.connect(Path(d)/'repair-queue.sqlite3') as db:
+                    self.assertEqual(db.execute('SELECT count(*) FROM tasks').fetchone()[0],1)
+                    self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0],1)
+
     def test_cli_rejects_scenario_filter_for_continuous_mode(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(SystemExit) as raised:

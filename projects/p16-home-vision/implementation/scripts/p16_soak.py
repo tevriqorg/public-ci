@@ -108,6 +108,7 @@ def enqueue_failures(root, records):
     if queue_path.is_symlink():
         raise ValueError('REPAIR_QUEUE_SYMLINK_FORBIDDEN')
     failures = []
+    observations = []
     batch_run_ids = {}
     # Validate the complete batch before opening a write transaction. A malformed
     # record must not leave even a partially initialized repair queue behind.
@@ -118,6 +119,7 @@ def enqueue_failures(root, records):
         previous = batch_run_ids.setdefault(r['run_id'], (key, evidence_hash))
         if previous != (key, evidence_hash):
             raise ValueError('REPAIR_OBSERVATION_CONFLICT')
+        observations.append((r['run_id'], key, evidence_hash))
         if r['status'] != 'FAIL':
             continue
         failures.append((key, r, evidence_hash))
@@ -127,10 +129,14 @@ def enqueue_failures(root, records):
         db.execute('BEGIN IMMEDIATE')
         db.execute('CREATE TABLE IF NOT EXISTS tasks (key TEXT PRIMARY KEY, scenario TEXT, seed TEXT, source TEXT, status TEXT)')
         db.execute('CREATE TABLE IF NOT EXISTS observations (run_id TEXT PRIMARY KEY, task_key TEXT, evidence_hash TEXT)')
-        for key, r, evidence_hash in failures:
-            prior = db.execute('SELECT task_key, evidence_hash FROM observations WHERE run_id=?', (r['run_id'],)).fetchone()
+        # Check every replay status against persisted failures. In particular a
+        # later PASS/BLOCKED record must not silently contradict an earlier FAIL
+        # just because only failures create repair tasks.
+        for run_id, key, evidence_hash in observations:
+            prior = db.execute('SELECT task_key, evidence_hash FROM observations WHERE run_id=?', (run_id,)).fetchone()
             if prior and prior != (key, evidence_hash):
                 raise ValueError('REPAIR_OBSERVATION_CONFLICT')
+        for key, r, evidence_hash in failures:
             db.execute('INSERT OR IGNORE INTO tasks VALUES (?,?,?,?,?)',
                        (key, r['scenario_id'], r['seed'], r['source_sha'], 'NEEDS_REPRO_AND_FIX'))
             db.execute('INSERT OR IGNORE INTO observations VALUES (?,?,?)',
