@@ -153,8 +153,8 @@ def test_s012_reports_unreadable_recordings_subtree_instead_of_clean_result(
     } == {("RECORDINGS_SUBTREE_UNREADABLE", "recordings/unreadable-camera")}
 
 
-def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path: Path):
-    """Replay dated source/file history with immutable chain and measured reconciliation samples."""
+def test_component_fifteen_day_media_evidence_and_source_history(session, tmp_path: Path):
+    """Exercise history and drift components without promoting full S032 acceptance."""
     nvr = NvrDevice(id="s032-history-nvr", name="S032 synthetic", host="127.0.0.1")
     camera = CameraTrack(id="s032-history-camera", nvr_id=nvr.id, track_id="202",
                          camera_name="S032 synthetic")

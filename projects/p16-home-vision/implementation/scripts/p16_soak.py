@@ -252,13 +252,10 @@ def registry():
             'tests/test_vela_mutation_matrix.py::test_s031_incorrect_hash_canary_rejects_digest_mutant',
             'tests/test_vela_mutation_matrix.py::test_s031_duplicate_enqueue_canary_rejects_missing_active_job_guard'],
             cwd=ROOT/'implementation',timeout_seconds=180),
-        'S032': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_reconciliation_storage.py::test_s032_fifteen_day_history_drift_chain_and_measured_p95'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
         # real injection and independent oracles. S022's component test uses a test reducer;
         # S026's process-local socket canary cannot constrain child egress;
-        # S028/029/030/036 lack system-level or multi-stage oracles.
+        # S028/029/030/032/036 lack full system-level or multi-stage acceptance.
         # Component tests cannot turn broader scenarios green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],

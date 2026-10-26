@@ -14,8 +14,8 @@ import subprocess
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from p16_soak import enqueue_failures, main, registry, verify_source_revision
-from vela_soak_runtime import command_handler
+from p16_soak import ROOT, enqueue_failures, main, registry, verify_source_revision
+from vela_soak_runtime import EvidenceStore, command_handler, run_scenario
 
 class RepairQueueTests(unittest.TestCase):
     def test_source_revision_requires_matching_clean_code_tree(self):
@@ -432,15 +432,24 @@ class RepairQueueTests(unittest.TestCase):
     def test_s030_learning_loop_is_not_promoted_by_local_ledger_test(self):
         self.assertNotIn('S030', registry())
 
-    def test_s032_registered_handler_executes_full_history_matrix(self):
-        result = registry()['S032']({})
-        self.assertEqual(result['status'], 'PASS')
-        self.assertEqual(result['exit_code'], 0)
-        self.assertFalse(result['timed_out'])
+    def test_s032_component_is_not_promoted_to_complete_scenario(self):
+        handlers = registry()
+        self.assertNotIn('S032', handlers)
+        catalog = json.loads((ROOT / 'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json').read_text())
+        with tempfile.TemporaryDirectory() as d:
+            store = EvidenceStore(Path(d))
+            result = run_scenario(
+                catalog, 'S032', handlers, store,
+                source_sha='a' * 40, guard=lambda: None,
+            )
+            self.assertFalse(result['complete'])
+            self.assertEqual(result['results'][0]['status'], 'BLOCKED')
+            self.assertEqual(result['results'][0]['reason'], 'SCENARIO_NOT_IMPLEMENTED')
+            self.assertEqual(store.records(), result['results'])
 
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S036'}
+        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S032', 'S036'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )
