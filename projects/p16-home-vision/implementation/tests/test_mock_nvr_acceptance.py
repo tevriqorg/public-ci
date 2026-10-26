@@ -563,13 +563,22 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
         "p16-media-transcribe", "--asset-root", str(derived_root), "--asset-id", asset.id,
         "--local-asr-command", sys.executable, str(sleeper),
     ])
-    assert transcribe_cli.main() == 1
+    asr_exit_code = transcribe_cli.main()
+    assert asr_exit_code == 1
     asr_status = json.loads(status_path.read_text())
     assert asr_status["state"] == "derived"
     assert asr_status["stages"]["transcript"] == "failed"
     assert asr_status["transcript"]["retryable"] is True
     assert asr_status["transcript"]["attempts"] == 1
-    timeline.append({"stage": "ASR", "state": "failed", "oracle": "retryable-transcript-status"})
+    timeline.append({
+        "stage": "ASR",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "return_code": asr_exit_code,
+        "asset_state": asr_status["state"],
+        "transcript_state": asr_status["stages"]["transcript"],
+        "retryable": asr_status["transcript"]["retryable"],
+        "attempts": asr_status["transcript"]["attempts"],
+    })
     assert_archive_unchanged()
 
     # Production reducer: removing an actual PTS-backed working image triggers
@@ -580,14 +589,19 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
     assert frames and all((derived_asset / "frames" / frame.file_name).is_file() for frame in frames)
     (derived_asset / "frames" / frames[0].file_name).unlink()
     reducer = FfmpegLumaDifferenceReducer(derived_asset / "frames", change_threshold=0.1)
-    with pytest.raises(ValueError, match="FRAME_REDUCE_PATH_UNSAFE"):
+    with pytest.raises(ValueError, match="FRAME_REDUCE_PATH_UNSAFE") as reduce_failure:
         reducer.reduce(frames)
-    timeline.append({"stage": "Reduce", "state": "failed", "oracle": "missing-working-frame-rejected"})
+    timeline.append({
+        "stage": "Reduce",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "exception_type": type(reduce_failure.value).__name__,
+        "exception": str(reduce_failure.value),
+    })
     assert_archive_unchanged()
 
     # Production package builder: a missing transcript artifact is rejected
     # before publication, without changing the independently archived source.
-    with pytest.raises(AnalysisPackageError, match="PACKAGE_ARTIFACT_MISSING"):
+    with pytest.raises(AnalysisPackageError, match="PACKAGE_ARTIFACT_MISSING") as package_failure:
         build_analysis_package(
             package_id="s036-package", asset_id=asset.id,
             source_manifest={"source_id": asset.source_recording_id}, pipeline={"version": "test"},
@@ -595,14 +609,25 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
                         "path": "transcript/missing.json"}],
             artifact_root=derived_asset,
         )
-    timeline.append({"stage": "Package", "state": "failed", "oracle": "missing-artifact-rejected"})
+    timeline.append({
+        "stage": "Package",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "exception_type": type(package_failure.value).__name__,
+        "exception": str(package_failure.value),
+    })
     assert_archive_unchanged()
     assert [row["stage"] for row in timeline] == ["ASR", "Reduce", "Package"]
-    assert all(row["state"] == "failed" and row["oracle"] for row in timeline)
     timeline_path = tmp_path / "s036-stage-timeline.json"
     timeline_path.write_text(json.dumps(timeline, sort_keys=True) + "\n")
     persisted_timeline = json.loads(timeline_path.read_text())
     assert persisted_timeline == timeline
+    observed_times = [datetime.fromisoformat(row["observed_at_utc"]) for row in persisted_timeline]
+    assert observed_times == sorted(observed_times)
+    assert persisted_timeline[0]["return_code"] == 1
+    assert persisted_timeline[0]["transcript_state"] == "failed"
+    assert persisted_timeline[0]["retryable"] is True
+    assert persisted_timeline[1]["exception"] == "FRAME_REDUCE_PATH_UNSAFE"
+    assert persisted_timeline[2]["exception"] == "PACKAGE_ARTIFACT_MISSING"
     final_status = json.loads(status_path.read_text())
     assert final_status["state"] == "derived"
     assert final_status["stages"]["web"] == final_status["stages"]["audio"] == "done"
