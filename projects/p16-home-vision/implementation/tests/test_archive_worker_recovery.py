@@ -413,3 +413,72 @@ def test_s013_storage_faults_fail_closed_without_touching_siblings(
     assert '"error_code": "STORAGE_NOT_READY"' in audits[0].payload_redacted
     assert sibling.read_bytes() == b"preserve-exact-sibling-bytes"
     assert sorted(p.name for p in volume_root.iterdir()) == ["unrelated-sentinel.bin"]
+
+
+def test_s013_write_time_eacces_after_preflight_fails_closed(session, tmp_path, monkeypatch):
+    """Inject a real filesystem EACCES after the volume metadata preflight passes."""
+    nvr = NvrDevice(id="nvr-s013-eacces", name="S013 synthetic", host="127.0.0.1")
+    camera = CameraTrack(id="camera-s013-eacces", nvr_id=nvr.id, track_id="214",
+                         camera_name="S013 synthetic")
+    source_start = datetime(2026, 8, 27, 7, tzinfo=timezone.utc)
+    source = SourceRecording(
+        id="source-s013-eacces", nvr_id=nvr.id, track_id=camera.track_id,
+        source_start=source_start, source_end=source_start + timedelta(seconds=10),
+        duration_ms=10_000, source_size_if_known=4096, source_state="available",
+    )
+    volume_root = tmp_path / "volume-eacces"
+    destination = volume_root / "recordings" / "2026/08/27" / "camera-214"
+    destination.mkdir(parents=True)
+    sentinel = volume_root / "unrelated-sentinel.bin"
+    sentinel.write_bytes(b"preserve-exact-sibling-bytes")
+    volume = StorageVolume(
+        id="volume-s013-eacces", node_id="fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    )
+    job = ArchiveJob(id="job-s013-eacces", source_recording_id=source.id, state="queued")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    session.add(source)
+    session.flush()
+    session.add(volume)
+    session.flush()
+    session.add(job)
+    session.commit()
+
+    segment = DiscoveredSegment(
+        track_id=camera.track_id, source_start=source_start,
+        source_end=source_start + timedelta(seconds=10), duration_ms=10_000,
+        locator_fingerprint="s013-eacces-synthetic", playback_uri="synthetic://s013-eacces",
+        source_size_if_known=4096,
+    )
+
+    class Client:
+        def download_to_part(self, _uri, path, *, progress_callback=None):
+            path.write_bytes(b"x" * 4096)
+            if progress_callback:
+                progress_callback(4096)
+            return 4096
+
+    original_mkdir = Path.mkdir
+
+    def deny_final_directory(path, *args, **kwargs):
+        if path == destination:
+            raise PermissionError(13, "synthetic EACCES", str(path))
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(archive_worker, "_find_exact_segment", lambda *_args, **_kwargs: segment)
+    monkeypatch.setattr(Path, "mkdir", deny_final_directory)
+    result = archive_worker.process_one(
+        session, Client(), probe=FakeProbe(), worker_id="s013-eacces-worker"
+    )
+
+    assert result == job.id
+    failed = session.get(ArchiveJob, job.id)
+    assert failed.state == "failed"
+    assert failed.error_code == "ARCHIVE_WORKER_FAILED"
+    assert session.query(LocalAsset).filter_by(source_recording_id=source.id).count() == 0
+    assert sentinel.read_bytes() == b"preserve-exact-sibling-bytes"
+    assert not any(path.name.endswith(".mp4") for path in volume_root.rglob("*"))
