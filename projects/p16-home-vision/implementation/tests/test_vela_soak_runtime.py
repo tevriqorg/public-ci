@@ -281,6 +281,18 @@ class RuntimeTests(unittest.TestCase):
                               cwd=ROOT, timeout_seconds=5)
         self.assertEqual(bad({})["exit_code"], 7)
 
+    def test_command_handler_forwards_stderr_only_when_requested(self):
+        process = unittest.mock.Mock()
+        process.wait.return_value = 7
+        for forward, expected in ((False, vela_soak_runtime.subprocess.DEVNULL), (True, None)):
+            with self.subTest(forward_stderr=forward), \
+                 patch.object(vela_soak_runtime.subprocess, "Popen", return_value=process) as spawn, \
+                 patch.object(vela_soak_runtime.os, "killpg", side_effect=ProcessLookupError):
+                outcome = command_handler(["synthetic-command"], cwd=ROOT, timeout_seconds=1,
+                                          forward_stderr=forward)({})
+                self.assertEqual(outcome["exit_code"], 7)
+                self.assertIs(spawn.call_args.kwargs["stderr"], expected)
+
     def test_continuous_process_runs_until_stop(self):
         calls=[]
         continuous(lambda:calls.append("cycle"),stop_requested=lambda:len(calls)==3,
