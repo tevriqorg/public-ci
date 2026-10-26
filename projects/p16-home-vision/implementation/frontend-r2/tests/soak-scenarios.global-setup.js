@@ -31,8 +31,13 @@ export default async function runRegisteredSoakScenarios() {
     .filter((path) => path.startsWith(implementationPrefix))
   console.log(`[P16_SOURCE_STATUS] ${JSON.stringify(dirtyPaths.slice(0, 30))}`)
 
-  const stateDir = resolve(implementationDir, '.tmp', 'hosted-browser-scenarios')
-  for (const scenarioId of ['S007', 'S008', 'S009', 'S024', 'S025']) {
+  const stateDir = resolve(process.env.RUNNER_TEMP || implementationDir, 'p16-soak-matrix-state')
+  const scenarioIds = Array.from({ length: 36 }, (_, index) => `S${String(index + 1).padStart(3, '0')}`)
+  // These scenarios deliberately remain BLOCKED until their full catalog
+  // injection matrices are implemented. Component regressions are not
+  // evidence for the omitted system-level subcases.
+  const expectedBlocked = new Set(['S028', 'S029', 'S030', 'S031', 'S036'])
+  for (const scenarioId of scenarioIds) {
     const execution = spawnSync('python', [
       resolve(implementationDir, 'scripts', 'p16_soak.py'),
       'scenario', '--scenario-id', scenarioId,
@@ -47,7 +52,7 @@ export default async function runRegisteredSoakScenarios() {
         P16_SOAK_WRAPPER_CHILD: '1',
       },
     })
-    if (execution.error || execution.status !== 0) {
+    if (execution.error) {
       const detail = execution.error?.code || execution.stderr?.trim() || `EXIT_${execution.status}`
       throw new Error(`P16_${scenarioId}_WRAPPER_FAILED:${detail}`)
     }
@@ -59,11 +64,16 @@ export default async function runRegisteredSoakScenarios() {
       throw new Error(`P16_${scenarioId}_WRAPPER_OUTPUT_INVALID`)
     }
     const records = result.results || []
-    if (result.complete !== true || result.day_credit !== false ||
+    const expectedStatus = expectedBlocked.has(scenarioId) ? 'BLOCKED' : 'PASS'
+    if ((expectedStatus === 'PASS' && execution.status !== 0) ||
+        (expectedStatus === 'BLOCKED' && execution.status !== 1) ||
+        result.day_credit !== false ||
         result.gate !== 'G1_CANDIDATE_ONLY' || records.length !== 1 ||
         records[0].scenario_id !== scenarioId || records[0].source_sha !== sourceSha ||
-        records[0].status !== 'PASS' || records[0].result?.timed_out !== false ||
-        records[0].result?.exit_code !== 0) {
+        records[0].status !== expectedStatus ||
+        (expectedStatus === 'PASS' && (result.complete !== true ||
+          records[0].result?.timed_out !== false || records[0].result?.exit_code !== 0)) ||
+        (expectedStatus === 'BLOCKED' && result.complete !== false)) {
       throw new Error(`P16_${scenarioId}_WRAPPER_RESULT_INVALID`)
     }
 
@@ -80,6 +90,7 @@ export default async function runRegisteredSoakScenarios() {
       scenario_id: scenarioId,
       source_sha: sourceSha,
       status: record.status,
+      reason: record.reason || null,
       day_credit: false,
       gate: 'G1_CANDIDATE_ONLY',
       evidence_path: relative(projectRoot, resolve(stateDir, 'runs', `${evidenceHash}.json`)),

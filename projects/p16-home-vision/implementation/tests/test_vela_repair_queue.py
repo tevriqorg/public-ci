@@ -438,14 +438,16 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(record['status'],'BLOCKED')
             self.assertEqual(hashlib.sha256(sibling.read_bytes()).hexdigest(),before)
 
-    def test_s029_registered_handler_executes_guard_injection(self):
-        outcome=registry()['S029']({'id':'S029'})
-        self.assertEqual(outcome['status'],'PASS')
-        self.assertEqual(outcome['exit_code'],0)
-        self.assertFalse(outcome['timed_out'])
+    def test_s029_system_resource_matrix_is_not_promoted_by_low_disk_only(self):
+        self.assertNotIn('S029', registry())
 
-    def test_s030_registered_handler_executes_learning_regression(self):
-        outcome=registry()['S030']({'id':'S030'})
-        self.assertEqual(outcome['status'],'PASS')
-        self.assertEqual(outcome['exit_code'],0)
-        self.assertFalse(outcome['timed_out'])
+    def test_s030_learning_loop_is_not_promoted_by_local_ledger_test(self):
+        self.assertNotIn('S030', registry())
+
+    def test_incomplete_catalog_matrices_remain_unregistered(self):
+        handlers = registry()
+        self.assertEqual(
+            {scenario for scenario in ('S028', 'S029', 'S030', 'S031', 'S036')
+             if scenario not in handlers},
+            {'S028', 'S029', 'S030', 'S031', 'S036'},
+        )

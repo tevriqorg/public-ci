@@ -248,19 +248,10 @@ def registry():
         'S027': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s027_synthetic_raw_retention_and_secret_redaction'],
             cwd=ROOT/'implementation',timeout_seconds=180),
-        'S028': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_vela_soak_runtime.py::RuntimeTests::test_s028_outage_catchup_keeps_missed_days_and_rejects_second_writer',
-            'tests/test_vela_soak_runtime.py::RuntimeTests::test_s028_older_catchup_leaves_current_day_open_for_daily_run'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
-        'S029': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_vela_repair_queue.py::RepairQueueTests::test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
-        'S030': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_vela_soak_runtime.py::RuntimeTests::test_s030_bug_reproducer_recovery_and_adjacent_regression_are_immutable'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
-        'S031': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_mutant_is_killed'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
+        # S028/029/030/031/036 stay unregistered until every frozen subcase
+        # has a real injected execution and an independent oracle. Their
+        # narrower component tests still run in backend CI but cannot turn
+        # the broader catalog scenario green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),
@@ -273,9 +264,6 @@ def registry():
         'S035': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s035_ten_minute_derivation_stays_within_time_memory_and_storage_bounds'],
             cwd=ROOT/'implementation',timeout_seconds=240),
-        'S036': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_mock_nvr_acceptance.py::test_s036_model_timeout_does_not_block_synthetic_archive'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
     }
 
 
