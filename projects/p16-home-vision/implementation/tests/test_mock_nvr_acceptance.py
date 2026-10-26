@@ -14,7 +14,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.archive_pipeline import ArchiveValidationError, verify_part
-from app.domain.archive_queue import retry_due_archive_jobs
+from app.domain.archive_queue import retry_due_archive_jobs, retry_failed_archive_jobs
 from app.domain.auto_archive import enqueue_closed_day_backlog
 from app.domain.analysis_contract import AnalysisRequest, ModelRunnerError
 from analysis_worker.model_runner import FailingFixtureModelRunner
@@ -606,3 +606,79 @@ def test_s003_three_day_two_camera_backfill_has_no_archive_omissions(session, tm
     assert all((volume_root / asset.relative_path).read_bytes() == payload for asset in assets)
     assert mock_nvr.search_count == 10
     assert mock_nvr.download_count == 6
+
+
+def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session, tmp_path, monkeypatch):
+    """S006: reject HTTP-200 XML payload, preserve the partial, then recover safely."""
+    payload = _synthetic_video(tmp_path / "s006-synthetic.mp4")
+    now = datetime.now(timezone.utc)
+    today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
+    source_start = today - timedelta(hours=2)
+    source_end = source_start + timedelta(seconds=3)
+    nvr = NvrDevice(id="s006-nvr", name="S006 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s006-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S006 synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    volume_root = tmp_path / "s006-volume"
+    session.add(StorageVolume(
+        id="s006-volume", node_id="ci-fixture", mount_path_runtime=str(volume_root),
+        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
+    ))
+    session.flush()
+
+    with MockHikvisionNvr(
+            [MockRecording("101", source_start, source_end, payload)],
+            error_payload_once=True) as mock_nvr:
+        with _client(mock_nvr) as client:
+            for scan_id in ("s006-scan-1", "s006-scan-2"):
+                scanned = scan_camera_range(
+                    session, nvr=nvr, camera=camera,
+                    query_start=today - timedelta(days=1),
+                    query_end=today + timedelta(days=1),
+                    searcher=client, scan_id=scan_id,
+                    scan_min_date=now.date() - timedelta(days=2),
+                )
+                assert (scanned.state, scanned.discovered_count) == ("success", 1)
+                session.commit()
+            auto = enqueue_closed_day_backlog(
+                session, nvr_id=nvr.id, now=datetime.now(timezone.utc),
+                enabled=True, timezone_verified=True)
+            assert auto.eligible_count == 1
+            assert auto.queue_result is not None and len(auto.queue_result.queued) == 1
+            job = session.get(ArchiveJob, auto.queue_result.queued[0])
+            assert job is not None and job.state == "queued"
+
+            monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_args, **_kwargs: None)
+            assert archive_worker.process_one(
+                session, client, probe=FfprobeMediaProbe(), worker_id="s006-worker") == job.id
+            session.refresh(job)
+            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
+            assert session.scalar(select(LocalAsset).where(
+                LocalAsset.source_recording_id == job.source_recording_id)) is None
+            quarantined = list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))
+            assert len(quarantined) == 1
+            assert quarantined[0].read_bytes().startswith(b"<?xml")
+            assert session.query(AuditEvent).filter_by(
+                event_type="archive_partial_quarantined", entity_id=job.id).count() == 1
+
+            retry = retry_failed_archive_jobs(session, actor="s006-synthetic-human-retry")
+            assert len(retry.queued) == 1
+            session.commit()
+            retry_job = session.get(ArchiveJob, retry.queued[0])
+            assert retry_job is not None and retry_job.state == "queued"
+            assert archive_worker.process_one(
+                session, client, probe=FfprobeMediaProbe(), worker_id="s006-worker") == retry_job.id
+            session.refresh(retry_job)
+            session.refresh(job)
+            assert retry_job.state == "completed"
+            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
+
+    asset = session.scalar(select(LocalAsset).where(
+        LocalAsset.source_recording_id == retry_job.source_recording_id))
+    assert asset is not None and asset.verification_state == "verified"
+    assert asset.sha256 == hashlib.sha256(payload).hexdigest()
+    assert (volume_root / asset.relative_path).read_bytes() == payload
+    assert len(list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))) == 1
+    assert mock_nvr.download_count == 2
