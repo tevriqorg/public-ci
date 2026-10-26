@@ -261,8 +261,11 @@ def command_handler(argv, *, cwd, timeout_seconds):
         raise ValueError("INVALID_TIMEOUT")
     def execute(scenario):
         started = time.monotonic()
+        child_env = os.environ.copy()
+        child_env["P16_SOAK_WRAPPER_CHILD"] = "1"
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   env=child_env,
                                    start_new_session=True)
         timed_out = False
         try:
