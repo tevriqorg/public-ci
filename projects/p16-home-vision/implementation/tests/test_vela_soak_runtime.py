@@ -20,6 +20,16 @@ def record(**kw):
 
 class RuntimeTests(unittest.TestCase):
     def test_s028_outage_catchup_keeps_missed_days_and_rejects_second_writer(self):
+        with tempfile.TemporaryDirectory() as fresh:
+            late_first = record_daily_cycle(
+                fresh, scheduled_start="2026-10-22", observed_day="2026-10-23",
+                run_id="first-late-catchup", complete=True,
+                observed_at="2026-10-25T00:20:00+08:00")
+            self.assertEqual(late_first["schedule"], [
+                ("2026-10-22", "MISSING"), ("2026-10-23", "MISSING"),
+                ("2026-10-24", "MISSING"), ("2026-10-25", "MISSING")])
+            self.assertEqual(late_first["attempt"],
+                             ("first-late-catchup", "2026-10-23", "PASS"))
         with tempfile.TemporaryDirectory() as d:
             first = record_daily_cycle(d, scheduled_start="2026-10-22",
                                        observed_day="2026-10-25", run_id="after-reboot",

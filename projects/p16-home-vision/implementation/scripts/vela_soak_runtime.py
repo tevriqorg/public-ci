@@ -123,11 +123,20 @@ def record_daily_cycle(root, *, scheduled_start, observed_day, run_id,
         raise ValueError("INVALID_SCHEDULE_DATE") from exc
     if start.isoformat() != scheduled_start or day.isoformat() != observed_day:
         raise ValueError("INVALID_SCHEDULE_DATE")
-    if day < start or day > datetime.now(ZoneInfo("Asia/Singapore")).date():
+    singapore = ZoneInfo("Asia/Singapore")
+    now = datetime.now(singapore)
+    try:
+        attempt_time = datetime.fromisoformat(observed_at) if observed_at else now
+    except (TypeError, ValueError) as exc:
+        raise ValueError("INVALID_ATTEMPT_TIME") from exc
+    if attempt_time.tzinfo is None:
+        raise ValueError("INVALID_ATTEMPT_TIME")
+    execution_day = attempt_time.astimezone(singapore).date()
+    if (day < start or day > execution_day or execution_day > now.date()):
         raise ValueError("SCHEDULE_DAY_OUT_OF_RANGE")
     if not isinstance(run_id, str) or not run_id or not isinstance(complete, bool):
         raise ValueError("INVALID_DAILY_ATTEMPT")
-    when = observed_at or datetime.now(timezone.utc).isoformat()
+    when = attempt_time.isoformat()
     path = Path(root)
     path.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path / "daily-ledger.sqlite3") as db:
@@ -136,8 +145,11 @@ def record_daily_cycle(root, *, scheduled_start, observed_day, run_id,
         db.execute("CREATE TABLE IF NOT EXISTS daily_schedule (day TEXT PRIMARY KEY, state TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS daily_attempts (run_id TEXT PRIMARY KEY, day TEXT NOT NULL, observed_at TEXT NOT NULL, outcome TEXT NOT NULL)")
         cursor = start
-        while cursor <= day:
-            state = "MISSING" if cursor < day else ("PASS" if complete else "FAIL")
+        while cursor <= execution_day:
+            # Only a complete run for its actual Singapore calendar date can
+            # mark that date PASS. A late catch-up remains an attempt, never
+            # retroactive calendar-day credit.
+            state = ("PASS" if complete else "FAIL") if cursor == day == execution_day else "MISSING"
             db.execute("INSERT OR IGNORE INTO daily_schedule VALUES (?, ?)",
                        (cursor.isoformat(), state))
             cursor += timedelta(days=1)
