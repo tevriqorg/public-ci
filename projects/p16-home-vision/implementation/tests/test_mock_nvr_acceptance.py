@@ -521,10 +521,10 @@ def test_model_runner_timeout_does_not_block_synthetic_archive(session, tmp_path
     assert mock_nvr.download_count == 1
 
 
-def test_component_post_archive_optional_stage_failures_keep_raw_verified(
+def test_s036_optional_stage_failures_preserve_verified_archive(
     session, tmp_path, monkeypatch,
 ):
-    """Exercise real ASR/Reduce/Package failure entries after verified archive."""
+    """Inject each catalog S036 failure after archive and preserve archive truth."""
     import os
     import sys
     import math
@@ -595,13 +595,15 @@ def test_component_post_archive_optional_stage_failures_keep_raw_verified(
     timeline_path = tmp_path / "s036-stage-outcomes.jsonl"
     timeline = []
 
-    def persist_failure(stage, started_at, error_code):
+    def persist_failure(stage, started_at, error_code, *, retryable=None):
         finished_at = datetime.now(timezone.utc)
         outcome = {
-            "stage": stage, "attempt": 1, "state": "failed", "retryable": True,
+            "stage": stage, "attempt": 1, "state": "failed",
             "started_at": started_at.isoformat(), "finished_at": finished_at.isoformat(),
             "error_code": error_code,
         }
+        if retryable is not None:
+            outcome["retryable"] = retryable
         with timeline_path.open("ab") as stream:
             stream.write((json.dumps(outcome, sort_keys=True, separators=(",", ":")) + "\n").encode())
             stream.flush()
@@ -642,7 +644,10 @@ def test_component_post_archive_optional_stage_failures_keep_raw_verified(
     assert asr_status["state"] == "derived"
     assert asr_status["stages"]["transcript"] == "failed"
     assert asr_status["transcript"]["retryable"] is True
-    persist_failure("asr", asr_started, asr_status["transcript"]["error_code"])
+    persist_failure(
+        "asr", asr_started, asr_status["transcript"]["error_code"],
+        retryable=asr_status["transcript"]["retryable"],
+    )
 
     frames = load_working_frame_manifest(Path(derived["frame_manifest"]), asset_id=derivation_root.name)
     fake_bin = tmp_path / "fake-bin"
@@ -660,10 +665,15 @@ def test_component_post_archive_optional_stage_failures_keep_raw_verified(
         paths.frames_dir, change_threshold=0.1, timeout_seconds=0.05,
     )
     reduce_started = datetime.now(timezone.utc)
-    with pytest.raises(ValueError, match="FRAME_REDUCE_DECODE_FAILED"):
+    try:
         reducer.reduce((frames[0],))
+    except ValueError as exc:
+        reduce_error = str(exc)
+    else:
+        pytest.fail("the injected reducer child timeout did not fail")
+    assert reduce_error == "FRAME_REDUCE_DECODE_FAILED"
     assert child_marker.read_text(encoding="utf-8") == "started"
-    persist_failure("frame_reduce", reduce_started, "FRAME_REDUCE_DECODE_FAILED")
+    persist_failure("frame_reduce", reduce_started, reduce_error)
 
     artifact_root = tmp_path / "s036-package-artifacts"
     artifact_root.mkdir()
@@ -677,16 +687,26 @@ def test_component_post_archive_optional_stage_failures_keep_raw_verified(
     )
     artifact.unlink()
     package_started = datetime.now(timezone.utc)
-    with pytest.raises(AnalysisPackageError, match="PACKAGE_ARTIFACT_MISSING"):
+    try:
         publish_immutable_package(
             tmp_path / "s036-package", package, artifact_root=artifact_root,
         )
-    persist_failure("analysis_package", package_started, "PACKAGE_ARTIFACT_MISSING")
+    except AnalysisPackageError as exc:
+        package_error = str(exc)
+    else:
+        pytest.fail("publication accepted a package whose source artifact was removed")
+    assert package_error == "PACKAGE_ARTIFACT_MISSING"
+    persist_failure("analysis_package", package_started, package_error)
 
     persisted = [json.loads(line) for line in timeline_path.read_text(encoding="utf-8").splitlines()]
     assert [event["stage"] for event in persisted] == ["asr", "frame_reduce", "analysis_package"]
     assert persisted == timeline
-    assert all(event["state"] == "failed" and event["retryable"] for event in persisted)
+    assert all(event["state"] == "failed" for event in persisted)
+    assert persisted[0]["retryable"] is True
+    assert all("retryable" not in event for event in persisted[1:])
+    assert [event["error_code"] for event in persisted[1:]] == [
+        "FRAME_REDUCE_DECODE_FAILED", "PACKAGE_ARTIFACT_MISSING",
+    ]
     assert all(datetime.fromisoformat(event["finished_at"]) >= datetime.fromisoformat(event["started_at"])
                for event in persisted)
     assert not (tmp_path / "s036-package" / "analysis-package.json").exists()

@@ -447,9 +447,12 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(result['results'][0]['reason'], 'SCENARIO_NOT_IMPLEMENTED')
             self.assertEqual(store.records(), result['results'])
 
+    def test_s036_post_archive_failure_matrix_is_registered(self):
+        self.assertIn('S036', registry())
+
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S032', 'S036'}
+        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S032'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )

@@ -266,6 +266,9 @@ def registry():
         'S035': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded'],
             cwd=ROOT/'implementation',timeout_seconds=240),
+        'S036': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_mock_nvr_acceptance.py::test_s036_optional_stage_failures_preserve_verified_archive'],
+            cwd=ROOT/'implementation',timeout_seconds=240),
     }
 
 
