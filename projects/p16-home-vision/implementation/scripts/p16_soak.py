@@ -243,9 +243,6 @@ def registry():
         'S026': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_repair_queue.py::RepairQueueTests::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
             cwd=ROOT/'implementation',timeout_seconds=90),
-        'S027': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_media_derivation_integration.py::test_s027_synthetic_raw_retention_and_secret_redaction'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
         # S028/029/030/031/036 stay unregistered until every frozen subcase
         # has a real injected execution and an independent oracle. Their
         # narrower component tests still run in backend CI but cannot turn
@@ -259,6 +256,7 @@ def registry():
             'tests/test_vela_mutation_matrix.py::test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle'],
             cwd=ROOT/'implementation',timeout_seconds=90),
         # S022's test-defined reducer does not exercise the production reducer.
+        # S027's secret scanner does not audit the Git worktree/index.
         # S035's long-video derivation test does not execute the catalogued
         # large-audio transcript path, so keep the complete scenario blocked.
     }

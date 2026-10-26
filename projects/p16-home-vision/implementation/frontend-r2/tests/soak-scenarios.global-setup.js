@@ -36,7 +36,7 @@ export default async function runRegisteredSoakScenarios() {
   // These scenarios deliberately remain BLOCKED until their full catalog
   // injection matrices are implemented. Component regressions are not
   // evidence for the omitted system-level subcases.
-  const expectedBlocked = new Set(['S022', 'S028', 'S029', 'S030', 'S031', 'S032', 'S035', 'S036'])
+  const expectedBlocked = new Set(['S022', 'S027', 'S028', 'S029', 'S030', 'S031', 'S032', 'S035', 'S036'])
   for (const scenarioId of scenarioIds) {
     const execution = spawnSync('python', [
       resolve(implementationDir, 'scripts', 'p16_soak.py'),
