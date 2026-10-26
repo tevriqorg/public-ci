@@ -73,6 +73,31 @@ class RepairQueueTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'SOURCE_TREE_DIRTY'):
                 verify_source_revision(project/'implementation','b'*40)
 
+    def test_source_revision_allows_ignored_hosted_frontend_outputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            code=root/'implementation'/'scripts'/'runner.py'
+            code.parent.mkdir(parents=True)
+            code.write_text('print("fixture")\n')
+            ignore=root/'implementation'/'.gitignore'
+            ignore.write_text('.tmp/\nfrontend-r2/node_modules/\nfrontend-r2/package-lock.json\n')
+            subprocess.run(['git','init','-q'],cwd=root,check=True)
+            subprocess.run(['git','config','user.name','P16 fixture'],cwd=root,check=True)
+            subprocess.run(['git','config','user.email','p16-fixture@example.invalid'],cwd=root,check=True)
+            subprocess.run(['git','add','implementation'],cwd=root,check=True)
+            subprocess.run(['git','commit','-qm','fixture'],cwd=root,check=True)
+            sha=subprocess.run(['git','rev-parse','HEAD'],cwd=root,check=True,
+                               capture_output=True,text=True).stdout.strip()
+            outputs=[
+                root/'implementation'/'.tmp'/'frontend-dist'/'index.html',
+                root/'implementation'/'frontend-r2'/'node_modules'/'vite'/'index.js',
+                root/'implementation'/'frontend-r2'/'package-lock.json',
+            ]
+            for output in outputs:
+                output.parent.mkdir(parents=True,exist_ok=True)
+                output.write_text('synthetic hosted output')
+            self.assertEqual(verify_source_revision(root,sha),sha)
+
     def test_cli_refuses_source_mismatch_before_state_writes(self):
         with tempfile.TemporaryDirectory() as d:
             state=Path(d)/'state'
