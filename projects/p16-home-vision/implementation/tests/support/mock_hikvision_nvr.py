@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import threading
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -46,11 +47,17 @@ class MockHikvisionNvr:
         self,
         recordings: list[MockRecording],
         *,
+        search_statuses: list[int] | None = None,
         download_statuses: list[int] | None = None,
+        search_delays: list[float] | None = None,
+        download_delays: list[float] | None = None,
         error_payload_once: bool = False,
     ) -> None:
         self.recordings = recordings
+        self.search_statuses = list(search_statuses or [])
         self.download_statuses = list(download_statuses or [])
+        self.search_delays = list(search_delays or [])
+        self.download_delays = list(download_delays or [])
         self.error_payload_once = error_payload_once
         self.search_count = 0
         self.download_count = 0
@@ -74,7 +81,12 @@ class MockHikvisionNvr:
                 self.send_header("Connection", "close")
                 self.end_headers()
                 if body:
-                    self.wfile.write(body)
+                    try:
+                        self.wfile.write(body)
+                    except OSError:
+                        # A deliberate timeout injection may close the client
+                        # before this fixture sends its delayed response.
+                        pass
                 self.close_connection = True
 
             def _authorized(self) -> bool:
@@ -154,6 +166,13 @@ class MockHikvisionNvr:
                     return
                 with owner._lock:
                     owner.search_count += 1
+                    status = owner.search_statuses.pop(0) if owner.search_statuses else None
+                    delay = owner.search_delays.pop(0) if owner.search_delays else 0
+                if delay:
+                    time.sleep(delay)
+                if status is not None:
+                    self._send(status, b"fixture search interruption", "text/plain")
+                    return
                 result = ET.Element("CMSearchResult", {"xmlns": "http://www.hikvision.com/ver20/XMLSchema"})
                 matches = ET.SubElement(result, "matchList")
                 for recording in owner.recordings:
@@ -184,8 +203,11 @@ class MockHikvisionNvr:
                 with owner._lock:
                     owner.download_count += 1
                     status = owner.download_statuses.pop(0) if owner.download_statuses else None
+                    delay = owner.download_delays.pop(0) if owner.download_delays else 0
                     corrupt = owner.error_payload_once
                     owner.error_payload_once = False
+                if delay:
+                    time.sleep(delay)
                 if status is not None:
                     self._send(status, b"bandwidth limited" if status == 453 else b"fixture error", "text/plain")
                     return
