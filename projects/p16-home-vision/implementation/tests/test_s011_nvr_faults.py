@@ -29,7 +29,7 @@ def _synthetic_video(path: Path) -> bytes:
             ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=10:d=3",
             "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono",
-            "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-shortest", "-c:v", "libx264", "-threads", "1", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-movflags", "+faststart", str(path),
         ],
         check=True,
