@@ -445,6 +445,16 @@ class RepairQueueTests(unittest.TestCase):
     def test_s030_learning_loop_is_not_promoted_by_local_ledger_test(self):
         self.assertNotIn('S030', registry())
 
+    def test_s015_handler_selects_only_catalogued_scan_hash_oracles(self):
+        def capture(argv, **kwargs):
+            return argv
+        with patch('p16_soak.command_handler', side_effect=capture):
+            handlers=registry()
+        argv=handlers['S015']
+        self.assertIn('pytest', argv)
+        self.assertNotIn('discover', argv)
+        self.assertEqual(sum('test_S015_' in item for item in argv), 3)
+
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
         blocked = {'S022', 'S028', 'S029', 'S030', 'S036'}

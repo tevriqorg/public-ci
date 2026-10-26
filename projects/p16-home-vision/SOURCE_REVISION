@@ -1,4 +1,4 @@
 repository=tevriqorg/P16-Home-Vision
 branch=test/p16r2-vela-15d-soak
-commit=b2501b27f0ed57a38110a451e4a04a997bdd8031
-copied_paths=implementation/frontend-r2/tests/soak-scenarios.global-setup.js
+commit=e7f4a4dc684cf0235a6e04b3533f72a3bd358bb9
+copied_paths=implementation/scripts/p16_soak.py,implementation/tests/test_vela_repair_queue.py
