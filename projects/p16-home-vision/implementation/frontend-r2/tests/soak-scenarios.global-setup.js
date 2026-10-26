@@ -20,11 +20,15 @@ export default async function runRegisteredSoakScenarios() {
   const sourceSha = sourceMarker.match(/^commit=([0-9a-f]{40})$/m)?.[1]
   if (!sourceSha) throw new Error('P16_SOURCE_REVISION_MARKER_INVALID')
 
+  const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd: projectRoot,
+  }).toString('utf8').trim()
+  const implementationPrefix = `${relative(repositoryRoot, implementationDir).replaceAll('\\', '/')}/`
   const dirtyPaths = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
     cwd: projectRoot,
   }).toString('utf8').split('\0').filter(Boolean)
     .map((entry) => entry.slice(3))
-    .filter((path) => path.startsWith('implementation/'))
+    .filter((path) => path.startsWith(implementationPrefix))
   console.log(`[P16_SOURCE_STATUS] ${JSON.stringify(dirtyPaths.slice(0, 30))}`)
 
   const stateDir = resolve(implementationDir, '.tmp', 'hosted-browser-scenarios')
