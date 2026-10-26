@@ -52,6 +52,8 @@ class MockHikvisionNvr:
         search_statuses: list[int] | None = None,
         search_error_bodies: list[bytes] | None = None,
         download_statuses: list[int] | None = None,
+        download_truncate_after_bytes: list[int] | None = None,
+        download_payload_overrides: list[bytes] | None = None,
         search_delays: list[float] | None = None,
         download_delays: list[float] | None = None,
         error_payload_once: bool = False,
@@ -62,6 +64,8 @@ class MockHikvisionNvr:
         self.search_statuses = list(search_statuses or [])
         self.search_error_bodies = list(search_error_bodies or [])
         self.download_statuses = list(download_statuses or [])
+        self.download_truncate_after_bytes = list(download_truncate_after_bytes or [])
+        self.download_payload_overrides = list(download_payload_overrides or [])
         self.search_delays = list(search_delays or [])
         self.download_delays = list(download_delays or [])
         self.error_payload_once = error_payload_once
@@ -213,6 +217,10 @@ class MockHikvisionNvr:
                     delay = owner.download_delays.pop(0) if owner.download_delays else 0
                     corrupt = owner.error_payload_once
                     owner.error_payload_once = False
+                    truncate_after = (owner.download_truncate_after_bytes.pop(0)
+                                      if owner.download_truncate_after_bytes else None)
+                    payload_override = (owner.download_payload_overrides.pop(0)
+                                        if owner.download_payload_overrides else None)
                 if delay:
                     time.sleep(delay)
                 if status is not None:
@@ -226,7 +234,27 @@ class MockHikvisionNvr:
                 if recording is None:
                     self._send(404, b"", "text/plain")
                     return
-                self._send(200, recording.payload, "video/mp4")
+                payload = payload_override if payload_override is not None else recording.payload
+                if truncate_after is not None:
+                    if truncate_after < 0 or truncate_after >= len(payload):
+                        self._send(500, b"invalid truncation fixture", "text/plain")
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "video/mp4")
+                    # Deliberately promise the original byte count, then close
+                    # after a prefix so the production client writes a real
+                    # partial file before detecting the truncated response.
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    try:
+                        self.wfile.write(payload[:truncate_after])
+                        self.wfile.flush()
+                    except OSError:
+                        pass
+                    self.close_connection = True
+                    return
+                self._send(200, payload, "video/mp4")
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._server.daemon_threads = True

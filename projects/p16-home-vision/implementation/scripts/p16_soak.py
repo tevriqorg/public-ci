@@ -179,7 +179,7 @@ def registry():
             'tests/test_mock_nvr_acceptance.py::test_s005_http_453_is_retryable_only_after_explicit_backoff'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         'S006': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_mock_nvr_acceptance.py::test_s006_invalid_download_part_is_quarantined_before_bounded_retry'],
+            'tests/test_mock_nvr_acceptance.py::test_s006_download_faults_quarantine_before_bounded_retry'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         'S007': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_archive_worker_recovery.py::test_s007_sigkill_after_file_promotion_recovers_without_nvr_redownload'],

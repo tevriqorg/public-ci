@@ -753,9 +753,30 @@ def test_s003_three_day_two_camera_backfill_has_no_archive_omissions(session, tm
     assert mock_nvr.download_count == 6
 
 
-def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session, tmp_path, monkeypatch):
-    """S006: reject HTTP-200 XML payload, preserve the partial, then recover safely."""
+@pytest.mark.parametrize("fault", ["http200-xml", "truncated-stream", "corrupt-media"])
+def test_s006_download_faults_quarantine_before_bounded_retry(
+    session, tmp_path, monkeypatch, fault,
+):
+    """Reject interrupted, corrupt, and HTTP-200 error downloads before retry."""
     payload = _synthetic_video(tmp_path / "s006-synthetic.mp4")
+    xml_error = (
+        b"<?xml version='1.0'?><ResponseStatus><statusCode>4</statusCode></ResponseStatus>"
+        + b" " * 2048
+    )
+    corrupt_media = b"synthetic corrupt media bytes\n" * 128
+    truncate_after = max(1024, len(payload) // 2)
+    if fault == "http200-xml":
+        fixture_fault = {"error_payload_once": True}
+        quarantined_bytes = xml_error
+        expected_error = "DOWNLOAD_ERROR_PAYLOAD"
+    elif fault == "truncated-stream":
+        fixture_fault = {"download_truncate_after_bytes": [truncate_after]}
+        quarantined_bytes = payload[:truncate_after]
+        expected_error = "NVR_DOWNLOAD_FAILED"
+    else:
+        fixture_fault = {"download_payload_overrides": [corrupt_media]}
+        quarantined_bytes = corrupt_media
+        expected_error = "MEDIA_PROBE_FAILED"
     now = datetime.now(timezone.utc)
     today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
     source_start = today - timedelta(hours=2)
@@ -774,8 +795,8 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session,
     session.flush()
 
     with MockHikvisionNvr(
-            [MockRecording("101", source_start, source_end, payload)],
-            error_payload_once=True) as mock_nvr:
+        [MockRecording("101", source_start, source_end, payload)], **fixture_fault,
+    ) as mock_nvr:
         with _client(mock_nvr) as client:
             for scan_id in ("s006-scan-1", "s006-scan-2"):
                 scanned = scan_camera_range(
@@ -799,12 +820,12 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session,
             assert archive_worker.process_one(
                 session, client, probe=FfprobeMediaProbe(), worker_id="s006-worker") == job.id
             session.refresh(job)
-            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
+            assert (job.state, job.error_code) == ("failed", expected_error)
             assert session.scalar(select(LocalAsset).where(
                 LocalAsset.source_recording_id == job.source_recording_id)) is None
             quarantined = list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))
             assert len(quarantined) == 1
-            assert quarantined[0].read_bytes().startswith(b"<?xml")
+            assert quarantined[0].read_bytes() == quarantined_bytes
             assert session.query(AuditEvent).filter_by(
                 event_type="archive_partial_quarantined", entity_id=job.id).count() == 1
 
@@ -818,14 +839,21 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session,
             session.refresh(retry_job)
             session.refresh(job)
             assert retry_job.state == "completed"
-            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
+            assert (job.state, job.error_code) == ("failed", expected_error)
 
     asset = session.scalar(select(LocalAsset).where(
         LocalAsset.source_recording_id == retry_job.source_recording_id))
     assert asset is not None and asset.verification_state == "verified"
     assert asset.sha256 == hashlib.sha256(payload).hexdigest()
     assert (volume_root / asset.relative_path).read_bytes() == payload
-    assert len(list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))) == 1
+    quarantined = list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == quarantined_bytes
+    # The retry publishes only the valid original video; failed bytes stay
+    # quarantined and never become a canonical verified asset.
+    assert asset.sha256 != hashlib.sha256(quarantined_bytes).hexdigest()
+    assert session.query(AuditEvent).filter_by(
+        event_type="archive_partial_quarantined", entity_id=job.id).count() == 1
     assert mock_nvr.download_count == 2
 
 
