@@ -13,6 +13,8 @@ from scripts.p16_soak import enqueue_failures
 from scripts.vela_soak_runtime import EvidenceStore, digest, record_daily_cycle
 import json
 import sqlite3
+import math
+import time
 
 
 def test_s012_reports_storage_ledger_mismatches_without_mutating_rows_or_files(
@@ -151,8 +153,8 @@ def test_s012_reports_unreadable_recordings_subtree_instead_of_clean_result(
     } == {("RECORDINGS_SUBTREE_UNREADABLE", "recordings/unreadable-camera")}
 
 
-def test_component_fifteen_day_media_evidence_and_source_history(session, tmp_path: Path):
-    """Exercise one historical reconciliation component; this is not full S032."""
+def test_s032_fifteen_day_history_drift_chain_and_measured_p95(session, tmp_path: Path):
+    """Replay dated source/file history with immutable chain and measured reconciliation samples."""
     nvr = NvrDevice(id="s032-history-nvr", name="S032 synthetic", host="127.0.0.1")
     camera = CameraTrack(id="s032-history-camera", nvr_id=nvr.id, track_id="202",
                          camera_name="S032 synthetic")
@@ -295,6 +297,77 @@ def test_component_fifteen_day_media_evidence_and_source_history(session, tmp_pa
         row["run_id"]: digest(row) for row in evidence_rows
     }
 
+    # Persist a day-indexed hash chain from source facts, actual archived bytes,
+    # and the immutable daily EvidenceStore record. The chain is independent of
+    # later filesystem state, so drift is reported without rewriting history.
+    daily_records = {row["history_day"]: row for row in evidence_rows
+                     if row["run_id"].endswith("-original")}
+    source_by_day = {source.source_start.date().isoformat(): source
+                     for source in session.query(SourceRecording)
+                     .filter_by(nvr_id=nvr.id).all()}
+    chain = []
+    previous = "0" * 64
+    for day in sorted(daily_records):
+        source = source_by_day[day]
+        asset = session.query(LocalAsset).filter_by(
+            source_recording_id=source.id
+        ).one()
+        record = daily_records[day]
+        payload = {
+            "day": day,
+            "source": [source.id, source.nvr_id, source.track_id,
+                       source.source_start.isoformat(), source.source_end.isoformat(),
+                       source.duration_ms, source.source_state,
+                       record["source_sha"]],
+            "asset": [asset.id, asset.relative_path, asset.size_bytes,
+                      expected_hashes[tmp_path / asset.relative_path]],
+            "evidence_hash": digest(record),
+            "previous": previous,
+        }
+        entry_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        chain.append({**payload, "sha256": entry_hash})
+        previous = entry_hash
+    assert len(chain) == 15
+    recomputed = []
+    previous = "0" * 64
+    for entry in chain:
+        payload = {key: value for key, value in entry.items() if key != "sha256"}
+        assert payload["previous"] == previous
+        entry_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        assert entry["sha256"] == entry_hash
+        recomputed.append(entry_hash)
+        previous = entry_hash
+    assert len(set(recomputed)) == 15
+    chain_path = state / "history-chain.json"
+    chain_path.write_text(json.dumps(chain, sort_keys=True, separators=(",", ":")))
+    chain_bytes = chain_path.read_bytes()
+
+    # Capture one real production reconciliation duration per historical date.
+    # Each call checks the full 15-date storage inventory; date keys make the
+    # sample set stable and the measured values remain environment-derived.
+    samples = []
+    for day in sorted(daily_records):
+        started = time.perf_counter_ns()
+        sample = reconcile_storage_files(session)
+        elapsed_ns = time.perf_counter_ns() - started
+        assert sample.clean
+        assert math.isfinite(elapsed_ns) and elapsed_ns > 0
+        samples.append({"day": day, "elapsed_ns": elapsed_ns})
+    assert [sample["day"] for sample in samples] == sorted(daily_records)
+    ordered_samples = sorted(sample["elapsed_ns"] for sample in samples)
+    p95 = ordered_samples[math.ceil(0.95 * len(ordered_samples)) - 1]
+    assert math.isfinite(p95) and p95 > 0
+    summary_path = state / "history-summary.json"
+    summary_path.write_text(json.dumps({"samples": samples, "p95_ns": p95},
+                                       sort_keys=True, separators=(",", ":")))
+    summary_bytes = summary_path.read_bytes()
+    summary = json.loads(summary_bytes)
+    assert summary["p95_ns"] == sorted(s["elapsed_ns"] for s in summary["samples"])[14]
+
     # Mutate a past file without changing size; an independent bytes-based SHA
     # oracle must identify exactly the affected historical ledger row.
     mutated_path = sorted(snapshots)[3]
@@ -312,6 +385,8 @@ def test_component_fifteen_day_media_evidence_and_source_history(session, tmp_pa
         (mutated_path.relative_to(tmp_path).as_posix(), f"s032-history-asset-03")
     ]
     assert not any(finding.code == "ASSET_SIZE_MISMATCH" for finding in changed.findings)
+    assert chain_path.read_bytes() == chain_bytes
+    assert summary_path.read_bytes() == summary_bytes
     assert mutated_path.read_bytes() == mutated_bytes
     assert [
         (asset.id, asset.relative_path, asset.size_bytes, asset.sha256,
@@ -362,12 +437,16 @@ def test_component_fifteen_day_media_evidence_and_source_history(session, tmp_pa
         .filter_by(nvr_id=nvr.id).order_by(SourceRecording.source_start).all()
     ] == sources_before
     assert store.records() == persisted
+    assert len(json.loads(chain_path.read_bytes())) == 15
+    assert len(json.loads(summary_path.read_bytes())["samples"]) == 15
 
     mutated_path.write_bytes(original_bytes)
     missing_path.write_bytes(missing_bytes)
     untracked_path.unlink()
     restored = reconcile_storage_files(session)
     assert restored.clean
+    assert chain_path.read_bytes() == chain_bytes
+    assert summary_path.read_bytes() == summary_bytes
     assert len([path for path in (tmp_path / "recordings").rglob("*.mp4")]) == 15
     assert all(hashlib.sha256(path.read_bytes()).hexdigest() == expected_hashes[path]
                for path in snapshots)

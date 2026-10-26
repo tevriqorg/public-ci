@@ -466,9 +466,15 @@ class RepairQueueTests(unittest.TestCase):
     def test_s030_learning_loop_is_not_promoted_by_local_ledger_test(self):
         self.assertNotIn('S030', registry())
 
+    def test_s032_registered_handler_executes_full_history_matrix(self):
+        result = registry()['S032']({})
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(result['exit_code'], 0)
+        self.assertFalse(result['timed_out'])
+
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S032', 'S036'}
+        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S036'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )
