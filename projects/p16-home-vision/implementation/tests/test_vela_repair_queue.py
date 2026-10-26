@@ -157,7 +157,7 @@ class RepairQueueTests(unittest.TestCase):
             enqueue_failures(d,[dict(base,run_id='first'),dict(base,run_id='green',status='PASS')])
             with sqlite3.connect(Path(d)/'repair-queue.sqlite3') as db:
                 self.assertEqual(db.execute('SELECT count(*) FROM tasks').fetchone()[0],1)
-                self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0],2)
+                self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0],3)
                 self.assertEqual(db.execute('SELECT status FROM tasks').fetchone()[0],'NEEDS_REPRO_AND_FIX')
             enqueue_failures(d,[dict(base,run_id='new-source',source_sha='b'*40)])
             with sqlite3.connect(Path(d)/'repair-queue.sqlite3') as db:
@@ -252,6 +252,20 @@ class RepairQueueTests(unittest.TestCase):
                 with sqlite3.connect(Path(d)/'repair-queue.sqlite3') as db:
                     self.assertEqual(db.execute('SELECT count(*) FROM tasks').fetchone()[0],1)
                     self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0],1)
+
+    def test_persisted_pass_or_blocked_run_id_cannot_be_replayed_with_another_status(self):
+        for first_status, later_status in (('PASS', 'FAIL'), ('BLOCKED', 'PASS')):
+            initial=dict(run_id='same-run',scenario_id='S014',seed='fixture',
+                         source_sha='a'*40,status=first_status)
+            with self.subTest(first_status=first_status), tempfile.TemporaryDirectory() as d:
+                enqueue_failures(d,[initial])
+                contradictory=dict(initial,status=later_status)
+                with self.assertRaisesRegex(ValueError,'REPAIR_OBSERVATION_CONFLICT'):
+                    enqueue_failures(d,[contradictory])
+                with sqlite3.connect(Path(d)/'repair-queue.sqlite3') as db:
+                    self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0],1)
+                    self.assertEqual(db.execute('SELECT count(*) FROM tasks').fetchone()[0],
+                                     int(first_status == 'FAIL'))
 
     def test_cli_rejects_scenario_filter_for_continuous_mode(self):
         with tempfile.TemporaryDirectory() as d:

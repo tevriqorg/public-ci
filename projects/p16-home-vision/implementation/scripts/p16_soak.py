@@ -129,18 +129,17 @@ def enqueue_failures(root, records):
         db.execute('BEGIN IMMEDIATE')
         db.execute('CREATE TABLE IF NOT EXISTS tasks (key TEXT PRIMARY KEY, scenario TEXT, seed TEXT, source TEXT, status TEXT)')
         db.execute('CREATE TABLE IF NOT EXISTS observations (run_id TEXT PRIMARY KEY, task_key TEXT, evidence_hash TEXT)')
-        # Check every replay status against persisted failures. In particular a
-        # later PASS/BLOCKED record must not silently contradict an earlier FAIL
-        # just because only failures create repair tasks.
+        # Every terminal status is an immutable observation. Persisting PASS and
+        # BLOCKED as well as FAIL prevents a later contradictory replay from
+        # depending on which status happened to arrive first.
         for run_id, key, evidence_hash in observations:
             prior = db.execute('SELECT task_key, evidence_hash FROM observations WHERE run_id=?', (run_id,)).fetchone()
             if prior and prior != (key, evidence_hash):
                 raise ValueError('REPAIR_OBSERVATION_CONFLICT')
+        db.executemany('INSERT OR IGNORE INTO observations VALUES (?,?,?)', observations)
         for key, r, evidence_hash in failures:
             db.execute('INSERT OR IGNORE INTO tasks VALUES (?,?,?,?,?)',
                        (key, r['scenario_id'], r['seed'], r['source_sha'], 'NEEDS_REPRO_AND_FIX'))
-            db.execute('INSERT OR IGNORE INTO observations VALUES (?,?,?)',
-                       (r['run_id'], key, evidence_hash))
 
 
 def resource_guard(state, *, max_bytes=64*1024**2,
