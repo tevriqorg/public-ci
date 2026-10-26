@@ -461,17 +461,26 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
 ):
     """Exercise all S036 optional-stage failures against a real synthetic archive."""
     import json
-    import struct
     import sys
-    import wave
 
     from app.domain.analysis_package import AnalysisPackageError, build_analysis_package
     from app.domain.ffmpeg_frame_reducer import FfmpegLumaDifferenceReducer
-    from app.domain.frame_reduce import WorkingFrame
-    from media_derivation import transcribe_cli
+    from app.domain.frame_reduce import load_working_frame_manifest
+    from media_derivation import cli as derivation_cli, transcribe_cli
     from media_derivation.local_speech import JsonCommandASR as RealJsonCommandASR
 
-    payload = _synthetic_video(tmp_path / "s036-matrix-source.mp4")
+    source_path = tmp_path / "s036-matrix-source.mp4"
+    generated = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=10:d=3",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000:duration=3",
+            "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-movflags", "+faststart", str(source_path),
+        ], check=False, capture_output=True, timeout=120,
+    )
+    assert generated.returncode == 0, generated.stderr.decode(errors="replace")[-1000:]
+    payload = source_path.read_bytes()
     now = datetime.now(timezone.utc)
     today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
     source_start = today - timedelta(hours=2)
@@ -533,29 +542,25 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
 
     timeline = []
 
-    # Production transcription CLI: the injected local command exceeds the
-    # deliberately shortened adapter timeout and records a retryable failure.
+    # Derive the same verified LocalAsset through the real FFmpeg production CLI.
     derived_root = tmp_path / "s036-derived"
-    derived_asset = derived_root / "asset-s036"
-    audio_path = derived_asset / "audio" / "speech.wav"
-    audio_path.parent.mkdir(parents=True)
-    with wave.open(str(audio_path), "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(16_000)
-        wav.writeframes(struct.pack("<16000h", *([2000] * 16000)))
+    derived_asset = derived_root / asset.id
+    monkeypatch.setattr(sys, "argv", [
+        "p16-media-derive", "--raw", str(archived_path), "--asset-root", str(derived_root),
+        "--asset-id", asset.id, "--camera", "synthetic-s036",
+    ])
+    assert derivation_cli.main() == 0
     status_path = derived_asset / "status.json"
-    status_path.write_text(json.dumps({
-        "asset_id": "asset-s036", "state": "derived",
-        "stages": {"web": "done", "frames": "done", "audio": "done", "transcript": "queued"},
-        "transcript": {"state": "queued", "attempts": 0},
-    }))
+    derived_status = json.loads(status_path.read_text())
+    assert derived_status["asset_id"] == asset.id
+    assert derived_status["state"] == "derived"
+    assert derived_status["stages"]["audio"] == "done"
     sleeper = tmp_path / "s036-asr-timeout.py"
     sleeper.write_text("import time; time.sleep(2); print('[]')\n")
     monkeypatch.setattr(transcribe_cli, "JsonCommandASR", lambda command, *, backend_id:
                         RealJsonCommandASR(command, backend_id=backend_id, timeout_seconds=0.05))
     monkeypatch.setattr(sys, "argv", [
-        "p16-media-transcribe", "--asset-root", str(derived_root), "--asset-id", "asset-s036",
+        "p16-media-transcribe", "--asset-root", str(derived_root), "--asset-id", asset.id,
         "--local-asr-command", sys.executable, str(sleeper),
     ])
     assert transcribe_cli.main() == 1
@@ -567,10 +572,16 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
     timeline.append({"stage": "ASR", "state": "failed", "oracle": "retryable-transcript-status"})
     assert_archive_unchanged()
 
-    # Production reducer: an absent PTS-backed working frame is rejected.
+    # Production reducer: removing an actual PTS-backed working image triggers
+    # an input error. Only disposable derived working data is affected.
+    frames = load_working_frame_manifest(
+        Path(derived_status["result"]["frame_manifest"]), asset_id=asset.id,
+    )
+    assert frames and all((derived_asset / "frames" / frame.file_name).is_file() for frame in frames)
+    (derived_asset / "frames" / frames[0].file_name).unlink()
     reducer = FfmpegLumaDifferenceReducer(derived_asset / "frames", change_threshold=0.1)
     with pytest.raises(ValueError, match="FRAME_REDUCE_PATH_UNSAFE"):
-        reducer.reduce((WorkingFrame("asset-s036:frame:1", "asset-s036", "missing.ppm", 1.25, 1250),))
+        reducer.reduce(frames)
     timeline.append({"stage": "Reduce", "state": "failed", "oracle": "missing-working-frame-rejected"})
     assert_archive_unchanged()
 
@@ -578,8 +589,8 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
     # before publication, without changing the independently archived source.
     with pytest.raises(AnalysisPackageError, match="PACKAGE_ARTIFACT_MISSING"):
         build_analysis_package(
-            package_id="s036-package", asset_id="asset-s036",
-            source_manifest={"source_id": "synthetic-s036"}, pipeline={"version": "test"},
+            package_id="s036-package", asset_id=asset.id,
+            source_manifest={"source_id": asset.source_recording_id}, pipeline={"version": "test"},
             artifacts=[{"artifact_id": "missing-transcript", "artifact_type": "transcript",
                         "path": "transcript/missing.json"}],
             artifact_root=derived_asset,
@@ -592,6 +603,12 @@ def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
     timeline_path.write_text(json.dumps(timeline, sort_keys=True) + "\n")
     persisted_timeline = json.loads(timeline_path.read_text())
     assert persisted_timeline == timeline
+    final_status = json.loads(status_path.read_text())
+    assert final_status["state"] == "derived"
+    assert final_status["stages"]["web"] == final_status["stages"]["audio"] == "done"
+    assert final_status["stages"]["transcript"] == "failed"
+    assert final_status["stages"]["reduce"] == "queued"
+    assert final_status["stages"]["package"] == "awaiting_analysis"
     assert mock_nvr.search_count == 3
     assert mock_nvr.download_count == 1
 
