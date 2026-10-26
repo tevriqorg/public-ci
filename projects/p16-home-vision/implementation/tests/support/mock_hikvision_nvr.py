@@ -47,14 +47,20 @@ class MockHikvisionNvr:
         self,
         recordings: list[MockRecording],
         *,
+        username: str = "fixture-user",
+        password: str = "fixture-password",
         search_statuses: list[int] | None = None,
+        search_error_bodies: list[bytes] | None = None,
         download_statuses: list[int] | None = None,
         search_delays: list[float] | None = None,
         download_delays: list[float] | None = None,
         error_payload_once: bool = False,
     ) -> None:
         self.recordings = recordings
+        self.username = username
+        self.password = password
         self.search_statuses = list(search_statuses or [])
+        self.search_error_bodies = list(search_error_bodies or [])
         self.download_statuses = list(download_statuses or [])
         self.search_delays = list(search_delays or [])
         self.download_delays = list(download_delays or [])
@@ -167,11 +173,12 @@ class MockHikvisionNvr:
                 with owner._lock:
                     owner.search_count += 1
                     status = owner.search_statuses.pop(0) if owner.search_statuses else None
+                    error_body = owner.search_error_bodies.pop(0) if owner.search_error_bodies else None
                     delay = owner.search_delays.pop(0) if owner.search_delays else 0
                 if delay:
                     time.sleep(delay)
                 if status is not None:
-                    self._send(status, b"fixture search interruption", "text/plain")
+                    self._send(status, error_body or b"fixture search interruption", "text/plain")
                     return
                 result = ET.Element("CMSearchResult", {"xmlns": "http://www.hikvision.com/ver20/XMLSchema"})
                 matches = ET.SubElement(result, "matchList")

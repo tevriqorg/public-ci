@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 import shutil
 import subprocess
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta, timezone
@@ -62,6 +64,57 @@ def _client(nvr: MockHikvisionNvr) -> HikvisionIsapiClient:
         timeout_seconds=5,
         download_method="POST",
     )
+
+
+def _git_secret_locations(repo: Path, secret: str, paths: tuple[str, ...]) -> set[str]:
+    """Return only location categories, never matched lines or secret bytes."""
+    locations: set[str] = set()
+    grep = subprocess.run(
+        ["git", "grep", "-F", "-l", secret, "--", *paths], cwd=repo,
+        capture_output=True,
+    )
+    assert grep.returncode in (0, 1)
+    if grep.returncode == 0:
+        locations.add("worktree")
+    staged = subprocess.run(
+        ["git", "grep", "--cached", "-F", "-l", secret, "--", *paths], cwd=repo,
+        capture_output=True,
+    )
+    assert staged.returncode in (0, 1)
+    if staged.returncode == 0:
+        locations.add("index")
+    history = subprocess.run(
+        ["git", "log", "--all", "--format=%H", "-S", secret, "--", *paths],
+        cwd=repo, capture_output=True,
+    )
+    assert history.returncode == 0
+    if history.stdout.strip():
+        locations.add("history")
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", *paths],
+        cwd=repo, capture_output=True, check=True,
+    )
+    for raw_path in untracked.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        path = repo / raw_path.decode("utf-8", "surrogateescape")
+        if secret in path.name or (path.is_file() and secret.encode() in path.read_bytes()):
+            locations.add("untracked")
+    return locations
+
+
+def _files_containing_secret(root: Path, secret: str) -> list[str]:
+    matches = []
+    marker = secret.encode()
+    for path in root.rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            if marker in path.read_bytes():
+                matches.append(path.relative_to(root).as_posix())
+        except OSError:
+            continue
+    return matches
 
 
 def test_s004_repeated_scan_enqueues_one_verified_asset(session, tmp_path, monkeypatch):
@@ -808,3 +861,75 @@ def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session):
     assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
     assert list(session.scalars(select(SourceRecording).where(
         SourceRecording.nvr_id == nvr.id))) == []
+
+
+def test_component_authenticated_nvr_reflected_secret_is_redacted_everywhere(
+    session, tmp_path, caplog, capsys,
+):
+    """A credential reflected by a hostile synthetic NVR stays out of P16 state."""
+    secret = secrets.token_hex(32)
+    nvr = NvrDevice(id="s027-nvr", name="S027 synthetic", host="127.0.0.1", timezone="UTC")
+    camera = CameraTrack(id="s027-camera", nvr_id=nvr.id, track_id="101",
+                         camera_name="S027 synthetic")
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+    start = datetime.now(timezone.utc) - timedelta(days=2)
+    reflected_body = f"<error>diagnostic credential={secret}</error>".encode()
+
+    with MockHikvisionNvr(
+        [], password=secret, search_statuses=[500],
+        search_error_bodies=[reflected_body],
+    ) as mock_nvr:
+        with HikvisionIsapiClient(
+            base_url=mock_nvr.base_url, username=mock_nvr.username,
+            password=mock_nvr.password, timeout_seconds=5,
+        ) as client:
+            result = scan_camera_range(
+                session, nvr=nvr, camera=camera,
+                query_start=start, query_end=start + timedelta(hours=1),
+                searcher=client, scan_id="s027-reflected-secret-scan",
+            )
+
+        assert mock_nvr.challenge_count == 1
+        assert mock_nvr.authorization_count == 1
+        assert mock_nvr.search_count == 1
+
+    assert (result.state, result.discovered_count, result.error_code) == (
+        "failed", 0, "NVR_SEARCH_HTTP_500",
+    )
+    assert secret not in repr(result)
+    scan = session.get(ScanRun, result.scan_id)
+    assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_500"
+    for model in (NvrDevice, CameraTrack, ScanRun, SourceRecording, ArchiveJob,
+                  LocalAsset, AuditEvent):
+        assert secret not in repr(list(session.scalars(select(model))))
+    assert secret not in caplog.text
+    captured = capsys.readouterr()
+    assert secret not in captured.out and secret not in captured.err
+    assert _files_containing_secret(tmp_path, secret) == []
+    assert _git_secret_locations(
+        Path(__file__).resolve().parents[2], secret,
+        ("implementation", "design", "reports"),
+    ) == set()
+
+    # Mutation canary: the same independent scanner must catch a leak in
+    # tracked bytes, the index, and reachable Git history without printing it.
+    with tempfile.TemporaryDirectory(prefix="s027-git-leak-", dir=tmp_path) as raw_repo:
+        repo = Path(raw_repo)
+        source = repo / "implementation" / "synthetic-config.txt"
+        source.parent.mkdir(parents=True)
+        source.write_text(f"password={secret}\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "P16 synthetic"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "p16-synthetic@example.invalid"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "implementation/synthetic-config.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "synthetic secret leak canary"], cwd=repo, check=True)
+        assert _git_secret_locations(repo, secret, ("implementation",)) == {
+            "worktree", "index", "history",
+        }
+    assert _files_containing_secret(tmp_path, secret) == []
+    assert session.scalar(select(SourceRecording).where(SourceRecording.nvr_id == nvr.id)) is None
+    assert session.scalar(select(ArchiveJob)) is None
+    assert session.scalar(select(LocalAsset)) is None

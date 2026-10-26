@@ -242,6 +242,10 @@ def registry():
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
         'S025': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S025'],
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
+        'S027': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_media_derivation_integration.py::test_component_raw_retention_and_secret_redaction',
+            'tests/test_mock_nvr_acceptance.py::test_component_authenticated_nvr_reflected_secret_is_redacted_everywhere'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
         'S031': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_canary_rejects_cutoff_mutant',
             'tests/test_vela_mutation_matrix.py::test_s031_future_ending_video_canary_rejects_cutoff_mutant',
@@ -249,8 +253,8 @@ def registry():
             'tests/test_vela_mutation_matrix.py::test_s031_duplicate_enqueue_canary_rejects_missing_active_job_guard'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
-        # real injection and independent oracles. S022/027 component tests omit catalog
-        # subcases; S026's process-local socket canary cannot constrain child egress;
+        # real injection and independent oracles. S022's component test uses a test reducer;
+        # S026's process-local socket canary cannot constrain child egress;
         # S028/029/030/036 lack system-level or multi-stage oracles; S032's component
         # drift injections do not meet the full historical acceptance/review bar.
         # Component tests cannot turn broader scenarios green.
