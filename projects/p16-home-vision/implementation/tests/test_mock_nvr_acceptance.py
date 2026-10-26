@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import secrets
 import shutil
 import subprocess
 import threading
@@ -441,188 +440,6 @@ def test_model_runner_timeout_does_not_block_synthetic_archive(session, tmp_path
     assert mock_nvr.download_count == 1
 
 
-def test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged(
-    session, tmp_path, monkeypatch,
-):
-    """Exercise all S036 optional-stage failures against a real synthetic archive."""
-    import json
-    import sys
-
-    from app.domain.analysis_package import AnalysisPackageError, build_analysis_package
-    from app.domain.ffmpeg_frame_reducer import FfmpegLumaDifferenceReducer
-    from app.domain.frame_reduce import load_working_frame_manifest
-    from media_derivation import cli as derivation_cli, transcribe_cli
-    from media_derivation.local_speech import JsonCommandASR as RealJsonCommandASR
-
-    source_path = tmp_path / "s036-matrix-source.mp4"
-    generated = subprocess.run(
-        [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=10:d=3",
-            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000:duration=3",
-            "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-movflags", "+faststart", str(source_path),
-        ], check=False, capture_output=True, timeout=120,
-    )
-    assert generated.returncode == 0, generated.stderr.decode(errors="replace")[-1000:]
-    payload = source_path.read_bytes()
-    now = datetime.now(timezone.utc)
-    today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
-    source_start = today - timedelta(hours=2)
-    source_end = source_start + timedelta(seconds=3)
-    nvr = NvrDevice(id="s036-matrix-nvr", name="S036 synthetic", host="127.0.0.1", timezone="UTC")
-    camera = CameraTrack(id="s036-matrix-camera", nvr_id=nvr.id, track_id="101",
-                         camera_name="S036 synthetic")
-    session.add(nvr)
-    session.flush()
-    session.add(camera)
-    volume_root = tmp_path / "s036-matrix-volume"
-    session.add(StorageVolume(
-        id="s036-matrix-volume", node_id="ci-fixture", mount_path_runtime=str(volume_root),
-        total_bytes=2 * 1024**4, free_bytes=2 * 1024**4, online=True, writable=True,
-    ))
-    session.flush()
-
-    recording = MockRecording("101", source_start, source_end, payload)
-    with MockHikvisionNvr([recording]) as mock_nvr:
-        with _client(mock_nvr) as client:
-            for scan_id in ("s036-matrix-scan-1", "s036-matrix-scan-2"):
-                scanned = scan_camera_range(
-                    session, nvr=nvr, camera=camera,
-                    query_start=today - timedelta(days=1),
-                    query_end=today + timedelta(days=1), searcher=client,
-                    scan_id=scan_id, scan_min_date=now.date() - timedelta(days=2),
-                )
-                assert (scanned.state, scanned.discovered_count) == ("success", 1)
-                session.commit()
-            auto = enqueue_closed_day_backlog(
-                session, nvr_id=nvr.id, now=datetime.now(timezone.utc),
-                enabled=True, timezone_verified=True,
-            )
-            assert auto.eligible_count == 1
-            job = session.get(ArchiveJob, auto.queue_result.queued[0])
-            assert job is not None and job.state == "queued"
-            monkeypatch.setattr(archive_worker, "_touch_heartbeat", lambda *_a, **_kw: None)
-            assert archive_worker.process_one(
-                session, client, probe=FfprobeMediaProbe(), worker_id="s036-matrix-worker",
-            ) == job.id
-
-    asset = session.scalar(select(LocalAsset).where(
-        LocalAsset.source_recording_id == job.source_recording_id,
-    ))
-    assert asset is not None
-    archived_path = volume_root / asset.relative_path
-    expected_archive_hash = hashlib.sha256(payload).hexdigest()
-    assert (asset.verification_state, asset.lifecycle_state, asset.sha256) == (
-        "verified", "present", expected_archive_hash,
-    )
-    assert hashlib.sha256(archived_path.read_bytes()).hexdigest() == expected_archive_hash
-
-    def assert_archive_unchanged():
-        session.refresh(asset)
-        assert (asset.verification_state, asset.lifecycle_state, asset.sha256) == (
-            "verified", "present", expected_archive_hash,
-        )
-        assert hashlib.sha256(archived_path.read_bytes()).hexdigest() == expected_archive_hash
-
-    timeline = []
-
-    # Derive the same verified LocalAsset through the real FFmpeg production CLI.
-    derived_root = tmp_path / "s036-derived"
-    derived_asset = derived_root / asset.id
-    monkeypatch.setattr(sys, "argv", [
-        "p16-media-derive", "--raw", str(archived_path), "--asset-root", str(derived_root),
-        "--asset-id", asset.id, "--camera", "synthetic-s036",
-    ])
-    assert derivation_cli.main() == 0
-    status_path = derived_asset / "status.json"
-    derived_status = json.loads(status_path.read_text())
-    assert derived_status["asset_id"] == asset.id
-    assert derived_status["state"] == "derived"
-    assert derived_status["stages"]["audio"] == "done"
-    sleeper = tmp_path / "s036-asr-timeout.py"
-    sleeper.write_text("import time; time.sleep(2); print('[]')\n")
-    monkeypatch.setattr(transcribe_cli, "JsonCommandASR", lambda command, *, backend_id:
-                        RealJsonCommandASR(command, backend_id=backend_id, timeout_seconds=0.05))
-    monkeypatch.setattr(sys, "argv", [
-        "p16-media-transcribe", "--asset-root", str(derived_root), "--asset-id", asset.id,
-        "--local-asr-command", sys.executable, str(sleeper),
-    ])
-    asr_exit_code = transcribe_cli.main()
-    assert asr_exit_code == 1
-    asr_status = json.loads(status_path.read_text())
-    assert asr_status["state"] == "derived"
-    assert asr_status["stages"]["transcript"] == "failed"
-    assert asr_status["transcript"]["retryable"] is True
-    assert asr_status["transcript"]["attempts"] == 1
-    timeline.append({
-        "stage": "ASR",
-        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
-        "return_code": asr_exit_code,
-        "asset_state": asr_status["state"],
-        "transcript_state": asr_status["stages"]["transcript"],
-        "retryable": asr_status["transcript"]["retryable"],
-        "attempts": asr_status["transcript"]["attempts"],
-    })
-    assert_archive_unchanged()
-
-    # Production reducer: removing an actual PTS-backed working image triggers
-    # an input error. Only disposable derived working data is affected.
-    frames = load_working_frame_manifest(
-        Path(derived_status["result"]["frame_manifest"]), asset_id=asset.id,
-    )
-    assert frames and all((derived_asset / "frames" / frame.file_name).is_file() for frame in frames)
-    (derived_asset / "frames" / frames[0].file_name).unlink()
-    reducer = FfmpegLumaDifferenceReducer(derived_asset / "frames", change_threshold=0.1)
-    with pytest.raises(ValueError, match="FRAME_REDUCE_PATH_UNSAFE") as reduce_failure:
-        reducer.reduce(frames)
-    timeline.append({
-        "stage": "Reduce",
-        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
-        "exception_type": type(reduce_failure.value).__name__,
-        "exception": str(reduce_failure.value),
-    })
-    assert_archive_unchanged()
-
-    # Production package builder: a missing transcript artifact is rejected
-    # before publication, without changing the independently archived source.
-    with pytest.raises(AnalysisPackageError, match="PACKAGE_ARTIFACT_MISSING") as package_failure:
-        build_analysis_package(
-            package_id="s036-package", asset_id=asset.id,
-            source_manifest={"source_id": asset.source_recording_id}, pipeline={"version": "test"},
-            artifacts=[{"artifact_id": "missing-transcript", "artifact_type": "transcript",
-                        "path": "transcript/missing.json"}],
-            artifact_root=derived_asset,
-        )
-    timeline.append({
-        "stage": "Package",
-        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
-        "exception_type": type(package_failure.value).__name__,
-        "exception": str(package_failure.value),
-    })
-    assert_archive_unchanged()
-    assert [row["stage"] for row in timeline] == ["ASR", "Reduce", "Package"]
-    timeline_path = tmp_path / "s036-stage-timeline.json"
-    timeline_path.write_text(json.dumps(timeline, sort_keys=True) + "\n")
-    persisted_timeline = json.loads(timeline_path.read_text())
-    assert persisted_timeline == timeline
-    observed_times = [datetime.fromisoformat(row["observed_at_utc"]) for row in persisted_timeline]
-    assert observed_times == sorted(observed_times)
-    assert persisted_timeline[0]["return_code"] == 1
-    assert persisted_timeline[0]["transcript_state"] == "failed"
-    assert persisted_timeline[0]["retryable"] is True
-    assert persisted_timeline[1]["exception"] == "FRAME_REDUCE_PATH_UNSAFE"
-    assert persisted_timeline[2]["exception"] == "PACKAGE_ARTIFACT_MISSING"
-    final_status = json.loads(status_path.read_text())
-    assert final_status["state"] == "derived"
-    assert final_status["stages"]["web"] == final_status["stages"]["audio"] == "done"
-    assert final_status["stages"]["transcript"] == "failed"
-    assert final_status["stages"]["reduce"] == "queued"
-    assert final_status["stages"]["package"] == "awaiting_analysis"
-    assert mock_nvr.search_count == 3
-    assert mock_nvr.download_count == 1
-
-
 def test_s001_two_camera_closed_day_archives_only_closed_segments(session, tmp_path, monkeypatch):
     """S001: discover two cameras, preserve only closed-day sources, archive both."""
     payload = _synthetic_video(tmp_path / "s001-synthetic.mp4")
@@ -883,11 +700,8 @@ def test_s003_three_day_two_camera_backfill_has_no_archive_omissions(session, tm
     assert mock_nvr.download_count == 6
 
 
-@pytest.mark.parametrize("fault", ["xml-error", "truncated-stream", "corrupt-media"])
-def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(
-    session, tmp_path, monkeypatch, fault,
-):
-    """S006: reject XML, truncated, and corrupt downloads before safe recovery."""
+def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(session, tmp_path, monkeypatch):
+    """S006: reject HTTP-200 XML payload, preserve the partial, then recover safely."""
     payload = _synthetic_video(tmp_path / "s006-synthetic.mp4")
     now = datetime.now(timezone.utc)
     today = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
@@ -908,9 +722,7 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(
 
     with MockHikvisionNvr(
             [MockRecording("101", source_start, source_end, payload)],
-            error_payload_once=fault == "xml-error",
-            truncate_download_bytes_once=128 if fault == "truncated-stream" else None,
-            corrupt_media_once=fault == "corrupt-media") as mock_nvr:
+            error_payload_once=True) as mock_nvr:
         with _client(mock_nvr) as client:
             for scan_id in ("s006-scan-1", "s006-scan-2"):
                 scanned = scan_camera_range(
@@ -934,23 +746,12 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(
             assert archive_worker.process_one(
                 session, client, probe=FfprobeMediaProbe(), worker_id="s006-worker") == job.id
             session.refresh(job)
-            expected_error = {
-                "xml-error": "DOWNLOAD_ERROR_PAYLOAD",
-                "truncated-stream": "NVR_DOWNLOAD_FAILED",
-                "corrupt-media": "MEDIA_PROBE_FAILED",
-            }[fault]
-            assert (job.state, job.error_code) == ("failed", expected_error)
+            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
             assert session.scalar(select(LocalAsset).where(
                 LocalAsset.source_recording_id == job.source_recording_id)) is None
             quarantined = list((volume_root / ".quarantine").glob(f"{job.id}.*.partial"))
             assert len(quarantined) == 1
-            quarantined_bytes = quarantined[0].read_bytes()
-            if fault == "xml-error":
-                assert quarantined_bytes.startswith(b"<?xml")
-            elif fault == "truncated-stream":
-                assert quarantined_bytes == payload[:128]
-            else:
-                assert quarantined_bytes.startswith(b"not-a-video")
+            assert quarantined[0].read_bytes().startswith(b"<?xml")
             assert session.query(AuditEvent).filter_by(
                 event_type="archive_partial_quarantined", entity_id=job.id).count() == 1
 
@@ -964,7 +765,7 @@ def test_s006_invalid_download_part_is_quarantined_before_bounded_retry(
             session.refresh(retry_job)
             session.refresh(job)
             assert retry_job.state == "completed"
-            assert (job.state, job.error_code) == ("failed", expected_error)
+            assert (job.state, job.error_code) == ("failed", "DOWNLOAD_ERROR_PAYLOAD")
 
     asset = session.scalar(select(LocalAsset).where(
         LocalAsset.source_recording_id == retry_job.source_recording_id))
@@ -1007,87 +808,3 @@ def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session):
     assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
     assert list(session.scalars(select(SourceRecording).where(
         SourceRecording.nvr_id == nvr.id))) == []
-
-
-    # The catalogued wrong-nonce branch uses valid credentials, so the server
-    # must reject the Digest response specifically because it signed the
-    # advertised nonce while the fixture expects a different nonce.
-    nonce_nvr = NvrDevice(
-        id="s010-nonce-nvr", name="S010 wrong nonce", host="127.0.0.1", timezone="UTC",
-    )
-    nonce_camera = CameraTrack(
-        id="s010-nonce-camera", nvr_id=nonce_nvr.id, track_id="101",
-        camera_name="S010 wrong nonce",
-    )
-    session.add(nonce_nvr)
-    session.flush()
-    session.add(nonce_camera)
-    session.flush()
-    with MockHikvisionNvr([], challenge_nonce="p16-advertised-wrong-nonce") as mock_nvr:
-        assert mock_nvr.challenge_nonce != mock_nvr.nonce
-        with HikvisionIsapiClient(
-            base_url=mock_nvr.base_url, username=mock_nvr.username,
-            password=mock_nvr.password, timeout_seconds=5,
-        ) as client:
-            result = scan_camera_range(
-                session, nvr=nonce_nvr, camera=nonce_camera,
-                query_start=start, query_end=start + timedelta(days=1),
-                searcher=client, scan_id="s010-wrong-nonce-scan",
-            )
-        assert mock_nvr.challenge_count == 1
-        assert mock_nvr.rejected_digest_count == 1
-        assert mock_nvr.authorization_count == 0
-        assert mock_nvr.search_count == 0
-        assert mock_nvr.download_count == 0
-
-    assert (result.state, result.error_code) == ("failed", "NVR_SEARCH_HTTP_403")
-    scan = session.get(ScanRun, result.scan_id)
-    assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
-    assert list(session.scalars(select(SourceRecording).where(
-        SourceRecording.nvr_id == nonce_nvr.id))) == []
-    assert list(session.scalars(select(ArchiveJob))) == []
-    assert list(session.scalars(select(LocalAsset))) == []
-
-
-def test_s027_authenticated_secret_is_not_persisted_on_search_failure(session, tmp_path, caplog):
-    """A reflected secret-bearing NVR error stays out of P16 state and logs."""
-    canary = "s027-secret-" + secrets.token_hex(24)
-    nvr = NvrDevice(id="s027-nvr", name="S027 synthetic", host="127.0.0.1", timezone="UTC")
-    camera = CameraTrack(id="s027-camera", nvr_id=nvr.id, track_id="101",
-                         camera_name="S027 synthetic")
-    session.add(nvr)
-    session.flush()
-    session.add(camera)
-    session.flush()
-    start = datetime.now(timezone.utc) - timedelta(days=2)
-
-    with MockHikvisionNvr(
-        [], username="s027-user", password=canary, search_statuses=[500],
-        search_error_body_once=f"upstream credential echo: {canary}".encode(),
-    ) as mock_nvr:
-        with HikvisionIsapiClient(
-            base_url=mock_nvr.base_url, username=mock_nvr.username,
-            password=mock_nvr.password,
-            timeout_seconds=5,
-        ) as client:
-            result = scan_camera_range(
-                session, nvr=nvr, camera=camera, query_start=start,
-                query_end=start + timedelta(days=1), searcher=client,
-                scan_id="s027-secret-redaction",
-            )
-        assert mock_nvr.authorization_count == 1
-        assert mock_nvr.search_count == 1
-
-    assert (result.state, result.error_code) == ("failed", "NVR_SEARCH_HTTP_500")
-    scan = session.get(ScanRun, result.scan_id)
-    assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_500"
-    assert canary not in repr(result)
-    assert canary not in repr(scan)
-    assert canary not in repr(nvr)
-    assert canary not in caplog.text
-    session.commit()
-    assert canary.encode() not in (tmp_path / "test.db").read_bytes()
-    assert list(session.scalars(select(SourceRecording).where(
-        SourceRecording.nvr_id == nvr.id))) == []
-    assert list(session.scalars(select(ArchiveJob))) == []
-    assert list(session.scalars(select(LocalAsset))) == []

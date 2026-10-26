@@ -84,8 +84,10 @@ def build_ffmpeg_command(
         "-hide_banner",
         "-nostdin",
         "-y",
-        # Keep filter pools within the worker's bounded memory envelope instead
-        # of sizing them from the host CPU count for the parallel frame branch.
+        # Keep each filter graph within the worker's explicit low-memory
+        # resource envelope. FFmpeg otherwise sizes filter pools from the host
+        # CPU count, which can fail on constrained workers while producing the
+        # parallel 1fps JPEG branch.
         "-filter_threads",
         "1",
         "-i",

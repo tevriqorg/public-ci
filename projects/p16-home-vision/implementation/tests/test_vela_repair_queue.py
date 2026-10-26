@@ -308,6 +308,16 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(result['status'],'PASS')
             self.assertEqual(output.read_text(),'1')
 
+    def test_s015_handler_selects_only_catalogued_scan_hash_oracles(self):
+        def capture(argv, **kwargs):
+            return argv
+        with patch('p16_soak.command_handler', side_effect=capture):
+            handlers=registry()
+        argv=handlers['S015']
+        self.assertIn('pytest', argv)
+        self.assertNotIn('discover', argv)
+        self.assertEqual(sum('test_S015_' in item for item in argv), 3)
+
     def test_scenario_mode_passes_only_the_selected_case_to_cycle_runner(self):
         with tempfile.TemporaryDirectory() as d:
             seen=[]
@@ -410,7 +420,7 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(record['source_sha'],'a'*40)
             self.assertEqual(record['status'],'PASS')
 
-    def test_s026_runner_egress_isolation_is_not_promoted_by_process_local_canary(self):
+    def test_s026_process_local_socket_canary_does_not_promote_scenario(self):
         self.assertNotIn('S026', registry())
 
     def test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling(self):
@@ -456,39 +466,31 @@ class RepairQueueTests(unittest.TestCase):
     def test_s030_learning_loop_is_not_promoted_by_local_ledger_test(self):
         self.assertNotIn('S030', registry())
 
-    def test_s015_handler_selects_only_catalogued_scan_hash_oracles(self):
-        def capture(argv, **kwargs):
-            return argv
-        with patch('p16_soak.command_handler', side_effect=capture):
-            handlers=registry()
-        argv=handlers['S015']
-        self.assertIn('pytest', argv)
-        self.assertNotIn('discover', argv)
-        self.assertEqual(sum('test_S015_' in item for item in argv), 3)
-
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S026', 'S028', 'S029', 'S030', 'S032'}
+        blocked = {'S022', 'S026', 'S027', 'S028', 'S029', 'S030', 'S032', 'S036'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )
-        registry_source = (Path(__file__).resolve().parents[1] / 'scripts/p16_soak.py').read_text(
-            encoding='utf-8',
-        )
-        self.assertIn("'S036': command_handler", registry_source)
-        self.assertIn('test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged',
-                      registry_source)
         setup = Path(__file__).resolve().parents[1] / 'frontend-r2/tests/soak-scenarios.global-setup.js'
         source = setup.read_text(encoding='utf-8')
         match = re.search(r'const expectedBlocked = new Set\(\[(.*?)\]\)', source, re.S)
         self.assertIsNotNone(match)
         self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), blocked)
-        self.assertIn('if (dirtyPaths.length > 0)', source)
-        self.assertIn('P16_IMPLEMENTATION_SOURCE_DIRTY:${dirtyPaths.length}', source)
-        self.assertIn("records[0].seed !== catalogById.get(scenarioId)?.seed", source)
-        self.assertIn("records[0].reason !== 'SCENARIO_NOT_IMPLEMENTED'", source)
-        self.assertIn("files.length !== scenarioIds.length", source)
-        self.assertIn("P16_SCENARIO_EVIDENCE_ID_SET_INVALID", source)
+        for guard in (
+            'if (dirtyPaths.length > 0)',
+            '`P16_IMPLEMENTATION_SOURCE_DIRTY:${dirtyPaths.length}`',
+            'catalogIds.length !== scenarioIds.length',
+            'records[0].seed !== scenario.seed',
+            "records[0].reason !== 'SCENARIO_NOT_IMPLEMENTED'",
+            'expectedRunIds.has(record.run_id)',
+            'evidenceFiles.length !== scenarioIds.length',
+            'P16_SOAK_MATRIX_STORE_INCOMPLETE_OR_EXTRA',
+            "writeFileSync(resolve(stateDir, 'matrix-summary.json')",
+            "{ flag: 'wx' }",
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, source)
 
     def test_browser_replay_reuse_is_limited_to_hosted_matrix_children(self):
         config = Path(__file__).resolve().parents[1] / 'frontend-r2/playwright.config.js'

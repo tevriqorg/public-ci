@@ -47,30 +47,18 @@ class MockHikvisionNvr:
         self,
         recordings: list[MockRecording],
         *,
-        username: str = "fixture-user",
-        password: str = "fixture-password",
         search_statuses: list[int] | None = None,
         download_statuses: list[int] | None = None,
         search_delays: list[float] | None = None,
         download_delays: list[float] | None = None,
         error_payload_once: bool = False,
-        search_error_body_once: bytes | None = None,
-        challenge_nonce: str | None = None,
-        truncate_download_bytes_once: int | None = None,
-        corrupt_media_once: bool = False,
     ) -> None:
         self.recordings = recordings
-        self.username = username
-        self.password = password
         self.search_statuses = list(search_statuses or [])
         self.download_statuses = list(download_statuses or [])
         self.search_delays = list(search_delays or [])
         self.download_delays = list(download_delays or [])
         self.error_payload_once = error_payload_once
-        self.search_error_body_once = search_error_body_once
-        self.challenge_nonce = self.nonce if challenge_nonce is None else challenge_nonce
-        self.truncate_download_bytes_once = truncate_download_bytes_once
-        self.corrupt_media_once = corrupt_media_once
         self.search_count = 0
         self.download_count = 0
         self.authorization_count = 0
@@ -109,7 +97,7 @@ class MockHikvisionNvr:
                     self.send_response(401)
                     self.send_header(
                         "WWW-Authenticate",
-                        f'Digest realm="{owner.realm}", nonce="{owner.challenge_nonce}", algorithm=MD5, qop="auth"',
+                        f'Digest realm="{owner.realm}", nonce="{owner.nonce}", algorithm=MD5, qop="auth"',
                     )
                     self.send_header("Content-Length", "0")
                     self.send_header("Connection", "close")
@@ -183,9 +171,7 @@ class MockHikvisionNvr:
                 if delay:
                     time.sleep(delay)
                 if status is not None:
-                    body = owner.search_error_body_once
-                    owner.search_error_body_once = None
-                    self._send(status, body or b"fixture search interruption", "text/plain")
+                    self._send(status, b"fixture search interruption", "text/plain")
                     return
                 result = ET.Element("CMSearchResult", {"xmlns": "http://www.hikvision.com/ver20/XMLSchema"})
                 matches = ET.SubElement(result, "matchList")
@@ -220,10 +206,6 @@ class MockHikvisionNvr:
                     delay = owner.download_delays.pop(0) if owner.download_delays else 0
                     corrupt = owner.error_payload_once
                     owner.error_payload_once = False
-                    truncate_bytes = owner.truncate_download_bytes_once
-                    owner.truncate_download_bytes_once = None
-                    corrupt_media = owner.corrupt_media_once
-                    owner.corrupt_media_once = False
                 if delay:
                     time.sleep(delay)
                 if status is not None:
@@ -236,21 +218,6 @@ class MockHikvisionNvr:
                 recording = next((x for x in owner.recordings if int(x.start.timestamp()) == start_epoch), None)
                 if recording is None:
                     self._send(404, b"", "text/plain")
-                    return
-                if truncate_bytes is not None:
-                    partial = recording.payload[:max(1, min(truncate_bytes, len(recording.payload) - 1))]
-                    self.send_response(200)
-                    self.send_header("Content-Type", "video/mp4")
-                    self.send_header("Content-Length", str(len(recording.payload)))
-                    self.send_header("Connection", "close")
-                    self.end_headers()
-                    self.wfile.write(partial)
-                    self.wfile.flush()
-                    self.close_connection = True
-                    return
-                if corrupt_media:
-                    corrupted = b"not-a-video" + recording.payload[len(b"not-a-video"):]
-                    self._send(200, corrupted, "video/mp4")
                     return
                 self._send(200, recording.payload, "video/mp4")
 

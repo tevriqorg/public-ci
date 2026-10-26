@@ -226,7 +226,7 @@ def registry():
             'tests/test_migrations.py::test_active_job_index_migration_refuses_duplicates_without_deleting_rows'],
             cwd=ROOT/'implementation',timeout_seconds=90),
         'S019': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_media_derivation_integration.py::test_s019_multi_container_codec_derivation_preserves_source_pts'],
+            'tests/test_media_derivation_integration.py::test_component_multicontainer_codec_matrix_stream_copy_and_pts'],
             cwd=ROOT/'implementation',timeout_seconds=240),
         'S020': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_transcribe_cli.py::test_s020_asr_timeout_is_retryable_without_changing_media',
@@ -242,11 +242,6 @@ def registry():
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
         'S025': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S025'],
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
-        'S027': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_media_derivation_integration.py::test_s027_raw_retention_and_secret_redaction_include_git_content',
-            'tests/test_media_derivation_integration.py::test_s027_git_secret_oracle_canary_detects_worktree_index_history_and_untracked',
-            'tests/test_mock_nvr_acceptance.py::test_s027_authenticated_secret_is_not_persisted_on_search_failure'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
         'S031': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_canary_rejects_cutoff_mutant',
             'tests/test_vela_mutation_matrix.py::test_s031_future_ending_video_canary_rejects_cutoff_mutant',
@@ -254,11 +249,11 @@ def registry():
             'tests/test_vela_mutation_matrix.py::test_s031_duplicate_enqueue_canary_rejects_missing_active_job_guard'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
-        # real injection and independent oracles. S022 still needs representative
-        # target benchmarking and a Human threshold decision; S028/029/030 still
-        # lack their system-level or independent-review oracles. S026's current
-        # socket monkeypatch is process-local and cannot establish child egress isolation.
-        # S032's synthetic ledger does not recheck historical media/source drift.
+        # real injection and independent oracles. S022/027 component tests omit catalog
+        # subcases; S026's process-local socket canary cannot constrain child egress;
+        # S028/029/030/036 lack system-level or multi-stage oracles; S032's component
+        # drift injections do not meet the full historical acceptance/review bar.
+        # Component tests cannot turn broader scenarios green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),
@@ -268,9 +263,6 @@ def registry():
         'S035': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded'],
             cwd=ROOT/'implementation',timeout_seconds=240),
-        'S036': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_mock_nvr_acceptance.py::test_s036_asr_reduce_package_failures_leave_verified_archive_unchanged'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
     }
 
 
