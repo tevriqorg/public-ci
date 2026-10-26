@@ -10,6 +10,7 @@ import os
 import socket
 import shutil
 import subprocess
+import re
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
@@ -446,8 +447,14 @@ class RepairQueueTests(unittest.TestCase):
 
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
+        unregistered = {'S028', 'S029', 'S030', 'S031', 'S032', 'S035', 'S036'}
         self.assertEqual(
-            {scenario for scenario in ('S028', 'S029', 'S030', 'S031', 'S032', 'S036')
-             if scenario not in handlers},
-            {'S028', 'S029', 'S030', 'S031', 'S032', 'S036'},
+            {f'S{number:03d}' for number in range(1, 37) if f'S{number:03d}' not in handlers},
+            unregistered,
         )
+        wrapper = Path(__file__).resolve().parents[1] / 'frontend-r2/tests/soak-scenarios.global-setup.js'
+        source = wrapper.read_text(encoding='utf-8')
+        match = re.search(r"expectedBlocked = new Set\(\[([^\]]*)\]\)", source)
+        self.assertIsNotNone(match, 'hosted scenario wrapper must declare its BLOCKED set')
+        hosted_blocked = set(re.findall(r"'((?:S)\d{3})'", match.group(1)))
+        self.assertEqual(hosted_blocked, unregistered)
