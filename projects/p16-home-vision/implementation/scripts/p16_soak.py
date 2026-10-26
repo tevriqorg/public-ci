@@ -256,9 +256,8 @@ def registry():
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),
-        'S032': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_vela_mutation_matrix.py::test_s032_fifteen_day_history_is_immutable_across_recovery_and_restart'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
+        # S032 is intentionally not registered: the daily evidence-ledger
+        # unit test does not verify historical source rows or archived files.
         'S034': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle'],
             cwd=ROOT/'implementation',timeout_seconds=90),

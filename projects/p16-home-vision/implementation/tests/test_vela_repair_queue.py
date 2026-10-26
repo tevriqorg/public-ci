@@ -447,7 +447,7 @@ class RepairQueueTests(unittest.TestCase):
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
         self.assertEqual(
-            {scenario for scenario in ('S028', 'S029', 'S030', 'S031', 'S036')
+            {scenario for scenario in ('S028', 'S029', 'S030', 'S031', 'S032', 'S036')
              if scenario not in handlers},
-            {'S028', 'S029', 'S030', 'S031', 'S036'},
+            {'S028', 'S029', 'S030', 'S031', 'S032', 'S036'},
         )
