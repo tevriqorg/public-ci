@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,7 +18,12 @@ export default async function runRegisteredSoakScenarios() {
   const implementationDir = resolve(projectRoot, 'implementation')
   const catalogPath = resolve(projectRoot, 'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json')
   const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'))
-  const sourceMarker = readFileSync(resolve(projectRoot, 'SOURCE_REVISION'), 'utf8')
+  const sourceMarkerPath = resolve(projectRoot, 'SOURCE_REVISION')
+  if (!existsSync(sourceMarkerPath)) {
+    console.log('[P16_SOAK_MATRIX_SKIPPED] exact SOURCE_REVISION mapping is absent; run the matrix from the provisioned public-ci source mirror')
+    return
+  }
+  const sourceMarker = readFileSync(sourceMarkerPath, 'utf8')
   const sourceSha = sourceMarker.match(/^commit=([0-9a-f]{40})$/m)?.[1]
   if (!sourceSha) throw new Error('P16_SOURCE_REVISION_MARKER_INVALID')
 
