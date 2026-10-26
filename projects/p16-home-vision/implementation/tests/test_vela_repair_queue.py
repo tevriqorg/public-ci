@@ -396,11 +396,8 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(record['source_sha'],'a'*40)
             self.assertEqual(record['status'],'PASS')
 
-    def test_s026_registered_handler_executes_the_injection(self):
-        outcome=registry()['S026']({'id':'S026'})
-        self.assertEqual(outcome['status'],'PASS')
-        self.assertEqual(outcome['exit_code'],0)
-        self.assertFalse(outcome['timed_out'])
+    def test_s026_runner_egress_isolation_is_not_promoted_by_process_local_canary(self):
+        self.assertNotIn('S026', registry())
 
     def test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling(self):
         from types import SimpleNamespace
@@ -457,7 +454,7 @@ class RepairQueueTests(unittest.TestCase):
 
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S028', 'S029', 'S030'}
+        blocked = {'S022', 'S026', 'S028', 'S029', 'S030'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )

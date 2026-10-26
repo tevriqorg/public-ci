@@ -243,9 +243,6 @@ def registry():
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
         'S025': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S025'],
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
-        'S026': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_vela_repair_queue.py::RepairQueueTests::test_s026_hostile_endpoint_and_bind_injection_stays_isolated'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
         'S027': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_media_derivation_integration.py::test_s027_raw_retention_and_secret_redaction_include_git_content',
             'tests/test_media_derivation_integration.py::test_s027_git_secret_oracle_canary_detects_worktree_index_history_and_untracked',
@@ -263,7 +260,8 @@ def registry():
         # These scenarios stay unregistered until every frozen subcase has
         # real injection and independent oracles. S022 still needs representative
         # target benchmarking and a Human threshold decision; S028/029/030 still
-        # lack their system-level or independent-review oracles.
+        # lack their system-level or independent-review oracles. S026's current
+        # socket monkeypatch is process-local and cannot establish child egress isolation.
         'S033': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s033_http_200_error_xml_and_invalid_video_are_rejected'],
             cwd=ROOT/'implementation',timeout_seconds=90),
