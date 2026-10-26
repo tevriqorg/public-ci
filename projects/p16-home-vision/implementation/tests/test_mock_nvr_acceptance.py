@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import shutil
 import subprocess
@@ -297,11 +298,32 @@ def test_s005_http_453_is_retryable_only_after_explicit_backoff(session, tmp_pat
             assert session.query(LocalAsset).filter_by(source_recording_id=source.id).count() == 0
             final_path = volume_root / "recordings" / start.strftime("%Y/%m/%d") / "camera-105" / f"{start:%H%M%S}-{source.id}.mp4"
             assert not final_path.exists()
-
+            failed_at = job.completed_at
+            assert failed_at is not None
+            if failed_at.tzinfo is None:
+                failed_at = failed_at.replace(tzinfo=timezone.utc)
+            # Use the production default backoff and prove the boundary on both
+            # sides instead of forcing an arbitrary later retry time.
             assert retry_due_archive_jobs(
-                session, now=datetime.now(timezone.utc) + timedelta(hours=1),
+                session, now=failed_at + timedelta(seconds=299),
+            ) == 0
+            session.refresh(job)
+            assert job.state == "failed"
+            assert session.query(AuditEvent).filter_by(
+                entity_id=job.id, event_type="archive_retry_scheduled",
+            ).count() == 0
+            assert retry_due_archive_jobs(
+                session, now=failed_at + timedelta(seconds=300),
             ) == 1
             session.commit()
+            retry_events = list(session.scalars(select(AuditEvent).where(
+                AuditEvent.entity_id == job.id,
+                AuditEvent.event_type == "archive_retry_scheduled",
+            )))
+            assert len(retry_events) == 1
+            assert json.loads(retry_events[0].payload_redacted) == {
+                "attempt": 2, "previous_error_code": "NVR_BANDWIDTH_LIMIT"
+            }
             assert archive_worker.process_one(
                 session, client, probe=FfprobeMediaProbe(), worker_id="s005-worker",
             ) == job.id
@@ -310,6 +332,7 @@ def test_s005_http_453_is_retryable_only_after_explicit_backoff(session, tmp_pat
                 LocalAsset.source_recording_id == source.id,
             ))
             assert job.state == "completed"
+            assert job.attempt_count == 2
             assert asset is not None and asset.verification_state == "verified"
             assert asset.sha256 == hashlib.sha256(payload).hexdigest()
             assert (volume_root / asset.relative_path).read_bytes() == payload
