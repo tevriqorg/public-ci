@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import socket
 import shutil
 import subprocess
@@ -15,7 +16,7 @@ from app.domain.auto_archive import enqueue_closed_day_backlog
 from app.domain.nvr_scan import scan_camera_range
 from app.infra.media.ffprobe import FfprobeMediaProbe
 from app.infra.nvr.hikvision import HikvisionIsapiClient
-from app.models import ArchiveJob, CameraTrack, LocalAsset, NvrDevice, SourceRecording, StorageVolume
+from app.models import ArchiveJob, AuditEvent, CameraTrack, LocalAsset, NvrDevice, SourceRecording, StorageVolume
 from scripts import archive_worker
 from tests.support.mock_hikvision_nvr import MockHikvisionNvr, MockRecording
 
@@ -85,17 +86,37 @@ def _discover_and_queue(session, nvr, camera, now, client, recording):
     return session.get(ArchiveJob, queued.queue_result.queued[0])
 
 
-def _retry_now(session, job):
-    retried = retry_due_archive_jobs(
-        session,
-        now=datetime.now(timezone.utc) + timedelta(seconds=30),
-        base_delay_seconds=1,
-        max_delay_seconds=1,
-    )
-    assert retried == 1
+def _retry_at_production_boundary(session, job):
+    failed_at = job.completed_at
+    previous_error_code = job.error_code
+    assert failed_at is not None
+    if failed_at.tzinfo is None:
+        failed_at = failed_at.replace(tzinfo=timezone.utc)
+    # The production first retry delay is 300 seconds. Prove the queue holds
+    # the failed job before that boundary and schedules it exactly at the bound.
+    assert retry_due_archive_jobs(
+        session, now=failed_at + timedelta(seconds=299)
+    ) == 0
+    session.refresh(job)
+    assert job.state == "failed"
+    assert session.query(AuditEvent).filter_by(
+        entity_id=job.id, event_type="archive_retry_scheduled"
+    ).count() == 0
+
+    assert retry_due_archive_jobs(
+        session, now=failed_at + timedelta(seconds=300)
+    ) == 1
     session.commit()
     session.refresh(job)
     assert job.state == "queued"
+    events = list(session.scalars(select(AuditEvent).where(
+        AuditEvent.entity_id == job.id,
+        AuditEvent.event_type == "archive_retry_scheduled",
+    )))
+    assert len(events) == 1
+    assert json.loads(events[0].payload_redacted) == {
+        "attempt": 2, "previous_error_code": previous_error_code
+    }
 
 
 def _assert_one_verified_asset(session, source_id, volume_root, payload):
@@ -161,7 +182,7 @@ def test_s011_download_timeout_retries_once_without_duplicate_asset(session, tmp
             session.refresh(job)
             assert (job.state, job.error_code) == ("failed", "NVR_DOWNLOAD_FAILED")
             failed_attempt_count = job.attempt_count
-            _retry_now(session, job)
+            _retry_at_production_boundary(session, job)
             assert job.attempt_count == failed_attempt_count
             assert archive_worker.process_one(
                 session, client, probe=FfprobeMediaProbe(), worker_id="s011-download-timeout"
@@ -169,6 +190,7 @@ def test_s011_download_timeout_retries_once_without_duplicate_asset(session, tmp
 
     session.refresh(job)
     assert job.state == "completed"
+    assert job.attempt_count == 2
     assert mock_nvr.download_count == 2
     _assert_one_verified_asset(session, job.source_recording_id, volume_root, payload)
 
@@ -195,7 +217,7 @@ def test_s011_offline_search_peer_retries_with_online_peer_without_duplicate(ses
                 assert (job.state, job.error_code) == (
                     "failed", "NVR_SEARCH_TRANSPORT_FAILED"
                 )
-            _retry_now(session, job)
+            _retry_at_production_boundary(session, job)
             assert archive_worker.process_one(
                 session, online_client, probe=FfprobeMediaProbe(), worker_id="s011-online"
             ) == job.id
