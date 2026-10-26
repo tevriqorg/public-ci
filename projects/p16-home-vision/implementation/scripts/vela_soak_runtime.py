@@ -260,11 +260,17 @@ def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False):
         raise ValueError("INVALID_COMMAND")
     if timeout_seconds <= 0:
         raise ValueError("INVALID_TIMEOUT")
+    command = list(argv)
+    # Pytest reports skipped tests with exit code 0. A soak PASS must mean each
+    # selected injection/oracle actually ran, so scenario wrappers fail closed
+    # on any skip (including fixture/setup skips and xfails).
+    if len(command) >= 3 and command[1:3] == ["-m", "pytest"]:
+        command[3:3] = ["-p", "tests.soak_fail_on_skip"]
     def execute(scenario):
         started = time.monotonic()
         child_env = os.environ.copy()
         child_env["P16_SOAK_WRAPPER_CHILD"] = "1"
-        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=sys.stderr if forward_stderr else subprocess.DEVNULL,
                                    stderr=None if forward_stderr else subprocess.DEVNULL,
                                    env=child_env,

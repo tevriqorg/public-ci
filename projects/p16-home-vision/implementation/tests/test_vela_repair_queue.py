@@ -308,6 +308,31 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(result['status'],'PASS')
             self.assertEqual(output.read_text(),'1')
 
+    def test_command_handler_rejects_skipped_pytest_oracle(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as d:
+            skipped_test = Path(d) / 'test_deliberate_skip.py'
+            skipped_test.write_text(
+                'import pytest\n'
+                'def test_selected_oracle_is_skipped():\n'
+                '    pytest.skip("synthetic missing runtime dependency")\n',
+                encoding='utf-8',
+            )
+            argv = [sys.executable, '-m', 'pytest', '-q', str(skipped_test)]
+            baseline = subprocess.run(
+                argv, cwd=Path(__file__).resolve().parents[1],
+                capture_output=True, text=True, timeout=30,
+            )
+            # Pytest's ordinary exit status treats a skipped selected test as
+            # success; the soak command wrapper must override that behavior.
+            self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
+
+            outcome = command_handler(
+                argv, cwd=Path(__file__).resolve().parents[1], timeout_seconds=30,
+            )({})
+            self.assertEqual(outcome['status'], 'FAIL')
+            self.assertFalse(outcome['timed_out'])
+            self.assertNotEqual(outcome['exit_code'], 0)
+
     def test_s015_handler_selects_only_catalogued_scan_hash_oracles(self):
         def capture(argv, **kwargs):
             return argv
