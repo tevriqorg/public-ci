@@ -233,9 +233,6 @@ def registry():
         'S021': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_transcribe_cli.py::test_s021_same_basename_wrapper_revision_is_persisted_as_transcript_provenance'],
             cwd=ROOT/'implementation',timeout_seconds=90),
-        'S022': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_frame_reduce_benchmark.py::test_s022_variable_pts_static_and_motion_manifest_has_grounded_selection'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
         'S023': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_analysis_package.py::test_s023_published_artifact_snapshot_survives_transcript_retry'],
             cwd=ROOT/'implementation',timeout_seconds=90),
@@ -261,6 +258,7 @@ def registry():
         'S034': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s034_singapore_midnight_cutoff_and_nvr_floor_match_utc_oracle'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        # S022's test-defined reducer does not exercise the production reducer.
         # S035's long-video derivation test does not execute the catalogued
         # large-audio transcript path, so keep the complete scenario blocked.
     }
