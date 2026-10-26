@@ -16,7 +16,17 @@ export default async function runRegisteredSoakScenarios() {
   const frontendDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
   const projectRoot = resolve(frontendDir, '../..')
   const implementationDir = resolve(projectRoot, 'implementation')
-  const sourceMarker = readFileSync(resolve(projectRoot, 'SOURCE_REVISION'), 'utf8')
+  let sourceMarker
+  try {
+    sourceMarker = readFileSync(resolve(projectRoot, 'SOURCE_REVISION'), 'utf8')
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    if (process.env.GITHUB_REPOSITORY === 'tevriqorg/public-ci') {
+      throw new Error('P16_SOURCE_REVISION_MARKER_REQUIRED')
+    }
+    console.log('[P16_SOAK_MATRIX] skipped outside the source-mapped public-ci mirror')
+    return
+  }
   const sourceSha = sourceMarker.match(/^commit=([0-9a-f]{40})$/m)?.[1]
   if (!sourceSha) throw new Error('P16_SOURCE_REVISION_MARKER_INVALID')
 
