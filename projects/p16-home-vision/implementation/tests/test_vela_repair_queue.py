@@ -295,18 +295,35 @@ class RepairQueueTests(unittest.TestCase):
             self.assertEqual(raised.exception.code,2)
             self.assertEqual(state.read_text(),'preserve')
 
-    def test_command_handler_marks_nested_wrapper_child(self):
+    def test_command_handler_marks_child_and_strips_ambient_nvr_and_bind_config(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             output=root/'child-marker'
             script=root/'check-child.py'
             script.write_text(
-                'import os\nfrom pathlib import Path\n'
-                f'Path({str(output)!r}).write_text(os.environ.get("P16_SOAK_WRAPPER_CHILD", ""))\n'
+                'import json, os\nfrom pathlib import Path\n'
+                f'Path({str(output)!r}).write_text(json.dumps({{'
+                '"wrapper_child": os.environ.get("P16_SOAK_WRAPPER_CHILD"), '
+                '"nvr_endpoint": os.environ.get("P16_NVR_ENDPOINT"), '
+                '"nvr_password": os.environ.get("P16_NVR_PASSWORD"), '
+                '"nvr_token": os.environ.get("P16_NVR_API_TOKEN"), '
+                '"bind_host": os.environ.get("P16_HTTP_BIND_HOST")'
+                '}))\n'
             )
-            result=command_handler([sys.executable,str(script)],cwd=root,timeout_seconds=5)({})
+            injection={
+                'P16_NVR_ENDPOINT':'http://198.51.100.23:8000',
+                'P16_NVR_PASSWORD':'synthetic-secret-canary',
+                'P16_NVR_API_TOKEN':'synthetic-api-token',
+                'P16_HTTP_BIND_HOST':'0.0.0.0',
+            }
+            with patch.dict(os.environ,injection):
+                result=command_handler([sys.executable,str(script)],cwd=root,
+                                       timeout_seconds=5)({})
             self.assertEqual(result['status'],'PASS')
-            self.assertEqual(output.read_text(),'1')
+            self.assertEqual(json.loads(output.read_text()),{
+                'wrapper_child':'1','nvr_endpoint':None,'nvr_password':None,
+                'nvr_token':None,'bind_host':None,
+            })
 
     def test_command_handler_rejects_skipped_pytest_oracle(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as d:

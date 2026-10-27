@@ -281,6 +281,11 @@ def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False,
     def execute(scenario):
         started = time.monotonic()
         child_env = os.environ.copy()
+        # Scenario children use local synthetic fixtures. Do not let ambient
+        # NVR credentials/endpoints or an unsafe bind override leak into them.
+        for name in tuple(child_env):
+            if name.startswith("P16_NVR_") or name == "P16_HTTP_BIND_HOST":
+                child_env.pop(name, None)
         child_env["P16_SOAK_WRAPPER_CHILD"] = "1"
         if expected_playwright_tag is not None:
             child_env["P16_SOAK_EXPECTED_PLAYWRIGHT_TAG"] = expected_playwright_tag
