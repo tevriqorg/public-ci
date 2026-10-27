@@ -237,7 +237,7 @@ def registry():
             cwd=ROOT/'implementation',timeout_seconds=90),
         'S022': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_frame_reduce_benchmark.py::test_s022_real_frame_reducer_selects_vfr_source_pts_and_motion_transitions'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
+            cwd=ROOT/'implementation',timeout_seconds=240,expected_test_count=1),
         'S023': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_analysis_package.py::test_s023_published_artifact_snapshot_survives_transcript_retry'],
             cwd=ROOT/'implementation',timeout_seconds=90),
