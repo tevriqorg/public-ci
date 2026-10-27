@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
+import os
 import resource
 import secrets
 import shutil
@@ -299,6 +301,7 @@ def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
     paths = DerivationPaths(raw=raw, root=tmp_path / "derived-10m")
     source_start_epoch = 1_700_000_000.0
     assert source_start_epoch < time.time()
+    cpu_started = os.times()
     started = time.monotonic()
     result = run_derivation(paths, DerivationPlan(has_audio=True),
                             source_start_epoch=source_start_epoch)
@@ -348,6 +351,13 @@ def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
     assert transcription.returncode == 0, transcription.stderr[-2000:]
     transcript_elapsed = time.monotonic() - transcript_started
     assert transcript_elapsed < 60
+
+    cpu_finished = os.times()
+    cpu_seconds = sum((cpu_finished.user - cpu_started.user,
+                       cpu_finished.system - cpu_started.system,
+                       cpu_finished.children_user - cpu_started.children_user,
+                       cpu_finished.children_system - cpu_started.children_system))
+    assert math.isfinite(cpu_seconds) and 0 < cpu_seconds < 300, cpu_seconds
 
     status = json.loads(status_path.read_text(encoding="utf-8"))
     transcript_path = paths.root / "transcript" / "transcript.json"
