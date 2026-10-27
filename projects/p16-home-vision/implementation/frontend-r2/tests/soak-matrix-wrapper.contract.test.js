@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import {
   createMatrixStateDir,
+  matrixSourceRequired,
   matrixSourceDirtyPaths,
   readSourceRevision,
 } from './soak-scenarios.global-setup.js'
@@ -16,6 +17,13 @@ test('required matrix source mapping fails closed when marker is missing', (t) =
   assert.throws(() => readSourceRevision(path.join(root, 'SOURCE_REVISION'), { required: true }),
     { message: 'P16_SOURCE_REVISION_MARKER_REQUIRED' })
   assert.equal(readSourceRevision(path.join(root, 'SOURCE_REVISION')), null)
+})
+
+test('CI requires a source marker even when the workflow omits the opt-in flag', () => {
+  assert.equal(matrixSourceRequired({ CI: 'true' }), true)
+  assert.equal(matrixSourceRequired({ P16_SOAK_MATRIX_REQUIRED: '1' }), true)
+  assert.equal(matrixSourceRequired({ CI: 'false' }), false)
+  assert.equal(matrixSourceRequired({}), false)
 })
 
 test('matrix source mapping accepts one exact source commit and rejects malformed markers', (t) => {

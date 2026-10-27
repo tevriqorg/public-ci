@@ -18,6 +18,10 @@ export function readSourceRevision(sourceMarkerPath, { required = false } = {}) 
   return revisions[0]
 }
 
+export function matrixSourceRequired(env = process.env) {
+  return env.P16_SOAK_MATRIX_REQUIRED === '1' || env.CI === 'true'
+}
+
 export function createMatrixStateDir({ runnerTemp, implementationDir, fallbackTemp = tmpdir() }) {
   const parent = resolve(runnerTemp || fallbackTemp)
   mkdirSync(parent, { recursive: true })
@@ -54,7 +58,7 @@ export default async function runRegisteredSoakScenarios() {
   const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'))
   const sourceMarkerPath = resolve(projectRoot, 'SOURCE_REVISION')
   const sourceSha = readSourceRevision(sourceMarkerPath, {
-    required: process.env.P16_SOAK_MATRIX_REQUIRED === '1',
+    required: matrixSourceRequired(),
   })
   if (!sourceSha) {
     console.log('[P16_SOAK_MATRIX_SKIPPED] exact SOURCE_REVISION mapping is absent; run the matrix from the provisioned public-ci source mirror')
