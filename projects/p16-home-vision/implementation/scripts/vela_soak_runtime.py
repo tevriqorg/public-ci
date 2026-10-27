@@ -250,7 +250,8 @@ def cycle_lock(root):
         yield
 
 
-def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False):
+def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False,
+                    expected_test_count=None):
     """Run an approved test command without shell; timeout kills its process group.
 
     Child output is deliberately not collected here: test-specific evidence must
@@ -261,15 +262,24 @@ def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False):
     if timeout_seconds <= 0:
         raise ValueError("INVALID_TIMEOUT")
     command = list(argv)
+    expected = None
     # Pytest reports skipped tests with exit code 0. A soak PASS must mean each
     # selected injection/oracle actually ran, so scenario wrappers fail closed
     # on any skip (including fixture/setup skips and xfails).
     if len(command) >= 3 and command[1:3] == ["-m", "pytest"]:
+        selectors = [argument for argument in command if "::" in argument]
+        expected = expected_test_count if expected_test_count is not None else (
+            len(selectors) if selectors else None
+        )
+        if expected is not None and (not isinstance(expected, int) or expected < 1):
+            raise ValueError("INVALID_EXPECTED_TEST_COUNT")
         command[3:3] = ["-p", "tests.soak_fail_on_skip"]
     def execute(scenario):
         started = time.monotonic()
         child_env = os.environ.copy()
         child_env["P16_SOAK_WRAPPER_CHILD"] = "1"
+        if expected is not None:
+            child_env["P16_SOAK_EXPECTED_TEST_COUNT"] = str(expected)
         process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=sys.stderr if forward_stderr else subprocess.DEVNULL,
                                    stderr=None if forward_stderr else subprocess.DEVNULL,
