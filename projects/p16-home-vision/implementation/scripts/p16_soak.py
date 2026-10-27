@@ -235,6 +235,9 @@ def registry():
         'S021': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_transcribe_cli.py::test_s021_same_basename_wrapper_revision_is_persisted_as_transcript_provenance'],
             cwd=ROOT/'implementation',timeout_seconds=90),
+        'S022': command_handler([sys.executable,'-m','pytest','-q',
+            'tests/test_frame_reduce_benchmark.py::test_s022_real_frame_reducer_selects_vfr_source_pts_and_motion_transitions'],
+            cwd=ROOT/'implementation',timeout_seconds=180),
         'S023': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_analysis_package.py::test_s023_published_artifact_snapshot_survives_transcript_retry'],
             cwd=ROOT/'implementation',timeout_seconds=90),
@@ -255,8 +258,7 @@ def registry():
             'tests/test_reconciliation_storage.py::test_s032_fifteen_day_history_drift_reconciliation_no_overwrite'],
             cwd=ROOT/'implementation',timeout_seconds=180),
         # These scenarios stay unregistered until every frozen subcase has
-        # real injection and independent oracles. S022's component test uses a test reducer;
-        # S026's process-local socket canary cannot constrain child egress;
+        # real injection and independent oracles. S026's process-local socket canary cannot constrain child egress;
         # S028/029/030 lack full system-level or multi-stage acceptance.
         # Component tests cannot turn broader scenarios green.
         'S033': command_handler([sys.executable,'-m','pytest','-q',

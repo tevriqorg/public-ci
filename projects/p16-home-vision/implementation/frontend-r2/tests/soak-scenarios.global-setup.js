@@ -82,7 +82,7 @@ export default async function runRegisteredSoakScenarios() {
   // injection matrices are implemented. Component regressions are not
   // evidence for the omitted system-level subcases.
   const expectedBlocked = new Set([
-    'S022', 'S026', 'S027', 'S028', 'S029', 'S030',
+    'S026', 'S027', 'S028', 'S029', 'S030',
   ])
   const expectedRunIds = new Set()
   const matrixRows = []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -79,6 +80,16 @@ def build_ffmpeg_command(
     to mono 16 kHz WAV for local ASR when an audio stream exists.
     """
 
+    if (isinstance(plan.sample_fps, bool)
+            or not isinstance(plan.sample_fps, (int, float))
+            or not math.isfinite(plan.sample_fps)
+            or plan.sample_fps <= 0):
+        raise ValueError("SAMPLE_FPS_INVALID")
+    sample_interval_seconds = 1.0 / plan.sample_fps
+    frame_filter = (
+        f"select='isnan(prev_selected_t)+gte(t-prev_selected_t,{sample_interval_seconds})',showinfo"
+    )
+
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -108,11 +119,11 @@ def build_ffmpeg_command(
         "-f",
         "mp4",
         str(paths.web_part),
-        # Frame branch. showinfo provides the actual PTS used for the manifest.
+        # Select on source time and preserve each selected input frame's PTS.
         "-map",
         "0:v:0",
         "-vf",
-        f"fps=fps={plan.sample_fps},showinfo",
+        frame_filter,
         "-fps_mode",
         "vfr",
         "-q:v",

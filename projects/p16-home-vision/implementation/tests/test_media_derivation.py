@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 from media_derivation.pipeline import (
     DerivationPaths,
@@ -14,7 +15,7 @@ def test_build_command_stream_copies_web_video_and_extracts_frames_and_audio(tmp
 
     assert ["-c:v", "copy"] == cmd[cmd.index("-c:v") : cmd.index("-c:v") + 2]
     assert "hvc1" in cmd
-    assert "fps=fps=1.0,showinfo" in cmd
+    assert "select='isnan(prev_selected_t)+gte(t-prev_selected_t,1.0)',showinfo" in cmd
     assert str(paths.audio_part) in cmd
     assert str(paths.web_part) in cmd
 
@@ -34,6 +35,15 @@ def test_build_command_does_not_apply_hevc_tag_to_h264(tmp_path: Path):
     assert "-c:v" in cmd
     assert "copy" in cmd
     assert "hvc1" not in cmd
+
+
+@pytest.mark.parametrize("sample_fps", [0, -1, float("nan"), float("inf"), True])
+def test_build_command_rejects_invalid_sample_fps(tmp_path: Path, sample_fps: float):
+    paths = DerivationPaths(raw=tmp_path / "raw.mpeg", root=tmp_path / "asset")
+    with pytest.raises(ValueError, match="SAMPLE_FPS_INVALID"):
+        build_ffmpeg_command(
+            paths, DerivationPlan(has_audio=False, sample_fps=sample_fps), video_codec="h264",
+        )
 
 
 def test_parse_showinfo_uses_pts_not_frame_index():
