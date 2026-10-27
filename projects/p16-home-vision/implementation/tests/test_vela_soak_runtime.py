@@ -295,6 +295,23 @@ class RuntimeTests(unittest.TestCase):
                 expected_stdout = sys.stderr if forward else vela_soak_runtime.subprocess.DEVNULL
                 self.assertIs(spawn.call_args.kwargs["stdout"], expected_stdout)
 
+    def test_playwright_handler_requires_tagged_execution_reporter(self):
+        process = unittest.mock.Mock()
+        process.wait.return_value = 0
+        handler = command_handler(
+            ["npx", "playwright", "test", "--grep", "@S024"], cwd=ROOT,
+            timeout_seconds=5, expected_playwright_tag="@S024",
+        )
+        with patch.object(vela_soak_runtime.subprocess, "Popen", return_value=process) as spawn, \
+             patch.object(vela_soak_runtime.os, "killpg", side_effect=ProcessLookupError):
+            self.assertEqual(handler({})["status"], "PASS")
+        command = spawn.call_args.args[0]
+        self.assertEqual(command[-1], "--reporter=line,./tests/soak-execution-reporter.js")
+        self.assertEqual(spawn.call_args.kwargs["env"]["P16_SOAK_EXPECTED_PLAYWRIGHT_TAG"], "@S024")
+        with self.assertRaisesRegex(ValueError, "INVALID_EXPECTED_PLAYWRIGHT_TAG"):
+            command_handler(["npx", "playwright", "test"], cwd=ROOT, timeout_seconds=5,
+                            expected_playwright_tag="@S036")
+
     def test_continuous_process_runs_until_stop(self):
         calls=[]
         continuous(lambda:calls.append("cycle"),stop_requested=lambda:len(calls)==3,

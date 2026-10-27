@@ -242,9 +242,11 @@ def registry():
             'tests/test_analysis_package.py::test_s023_published_artifact_snapshot_survives_transcript_retry'],
             cwd=ROOT/'implementation',timeout_seconds=90),
         'S024': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S024'],
-            cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
+            cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True,
+            expected_playwright_tag='@S024'),
         'S025': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S025'],
-            cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
+            cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True,
+            expected_playwright_tag='@S025'),
         # S027 stays blocked as a complete catalog scenario: its secret
         # reflection component is real, but the RAW cleanup test currently
         # injects environment names the product CLI does not consume.

@@ -251,7 +251,7 @@ def cycle_lock(root):
 
 
 def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False,
-                    expected_test_count=None):
+                    expected_test_count=None, expected_playwright_tag=None):
     """Run an approved test command without shell; timeout kills its process group.
 
     Child output is deliberately not collected here: test-specific evidence must
@@ -263,6 +263,10 @@ def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False,
         raise ValueError("INVALID_TIMEOUT")
     command = list(argv)
     expected = None
+    if expected_playwright_tag is not None:
+        if expected_playwright_tag not in ("@S024", "@S025") or "playwright" not in " ".join(command):
+            raise ValueError("INVALID_EXPECTED_PLAYWRIGHT_TAG")
+        command.extend(["--reporter=line,./tests/soak-execution-reporter.js"])
     # Pytest reports skipped tests with exit code 0. A soak PASS must mean each
     # selected injection/oracle actually ran, so scenario wrappers fail closed
     # on any skip (including fixture/setup skips and xfails).
@@ -278,6 +282,8 @@ def command_handler(argv, *, cwd, timeout_seconds, forward_stderr=False,
         started = time.monotonic()
         child_env = os.environ.copy()
         child_env["P16_SOAK_WRAPPER_CHILD"] = "1"
+        if expected_playwright_tag is not None:
+            child_env["P16_SOAK_EXPECTED_PLAYWRIGHT_TAG"] = expected_playwright_tag
         if expected is not None:
             child_env["P16_SOAK_EXPECTED_TEST_COUNT"] = str(expected)
         process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL,

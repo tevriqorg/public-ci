@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createMatrixStateDir, readSourceRevision } from './soak-scenarios.global-setup.js'
+import SoakExecutionReporter from './soak-execution-reporter.js'
 
 test('required matrix source mapping fails closed when marker is missing', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'p16-matrix-marker-'))
@@ -49,4 +50,34 @@ test('matrix state honors runner temp while allocating a fresh directory', (t) =
   const state = createMatrixStateDir({ runnerTemp, implementationDir: implementation })
   assert.ok(state.startsWith(`${runnerTemp}${path.sep}`))
   assert.ok(!state.startsWith(`${implementation}${path.sep}`))
+})
+
+test('browser scenario reporter requires exactly one tagged passing test', () => {
+  const priorTag = process.env.P16_SOAK_EXPECTED_PLAYWRIGHT_TAG
+  process.env.P16_SOAK_EXPECTED_PLAYWRIGHT_TAG = '@S024'
+  try {
+    const make = () => new SoakExecutionReporter()
+    const testCase = { title: '@S024 browser contract' }
+    const suite = { allTests: () => [testCase] }
+
+    const passed = make()
+    passed.onBegin({}, suite)
+    passed.onTestEnd(testCase, { status: 'passed' })
+    assert.equal(passed.onEnd({ status: 'passed' }), undefined)
+
+    for (const [cases, outcomes, status] of [
+      [[], [], 'passed'],
+      [[testCase], ['skipped'], 'passed'],
+      [[testCase, testCase], ['passed', 'passed'], 'passed'],
+      [[testCase], ['failed'], 'failed'],
+    ]) {
+      const reporter = make()
+      reporter.onBegin({}, { allTests: () => cases })
+      outcomes.forEach((outcome) => reporter.onTestEnd(testCase, { status: outcome }))
+      assert.deepEqual(reporter.onEnd({ status }), { status: 'failed' })
+    }
+  } finally {
+    if (priorTag === undefined) delete process.env.P16_SOAK_EXPECTED_PLAYWRIGHT_TAG
+    else process.env.P16_SOAK_EXPECTED_PLAYWRIGHT_TAG = priorTag
+  }
 })
