@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { createMatrixStateDir, readSourceRevision } from './soak-scenarios.global-setup.js'
+import {
+  createMatrixStateDir,
+  matrixSourceDirtyPaths,
+  readSourceRevision,
+} from './soak-scenarios.global-setup.js'
 import SoakExecutionReporter from './soak-execution-reporter.js'
 
 test('required matrix source mapping fails closed when marker is missing', (t) => {
@@ -50,6 +54,21 @@ test('matrix state honors runner temp while allocating a fresh directory', (t) =
   const state = createMatrixStateDir({ runnerTemp, implementationDir: implementation })
   assert.ok(state.startsWith(`${runnerTemp}${path.sep}`))
   assert.ok(!state.startsWith(`${implementation}${path.sep}`))
+})
+
+test('matrix setup rejects a changed scenario catalog but ignores unrelated report edits', () => {
+  const dirty = matrixSourceDirtyPaths([
+    'implementation/app/domain/archive.py',
+    'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json',
+    'reports/local-note.md',
+  ], {
+    implementationPrefix: 'implementation/',
+    catalogPath: 'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json',
+  })
+  assert.deepEqual(dirty, [
+    'implementation/app/domain/archive.py',
+    'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json',
+  ])
 })
 
 test('browser scenario reporter requires exactly one tagged passing test', () => {

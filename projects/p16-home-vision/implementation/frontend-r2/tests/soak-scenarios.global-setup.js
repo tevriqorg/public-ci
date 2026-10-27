@@ -29,6 +29,15 @@ export function createMatrixStateDir({ runnerTemp, implementationDir, fallbackTe
   return stateDir
 }
 
+export function matrixSourceDirtyPaths(statusEntries, { implementationPrefix, catalogPath }) {
+  const catalog = catalogPath.replaceAll('\\', '/')
+  const prefix = implementationPrefix.replaceAll('\\', '/').replace(/\/$/, '') + '/'
+  return statusEntries.filter((path) => {
+    const normalized = path.replaceAll('\\', '/')
+    return normalized.startsWith(prefix) || normalized === catalog
+  })
+}
+
 const stable = (value) => Array.isArray(value)
   ? value.map(stable)
   : value && typeof value === 'object'
@@ -60,10 +69,13 @@ export default async function runRegisteredSoakScenarios() {
     cwd: projectRoot,
   }).toString('utf8').split('\0').filter(Boolean)
     .map((entry) => entry.slice(3))
-    .filter((path) => path.startsWith(implementationPrefix))
-  console.log(`[P16_SOURCE_STATUS] ${JSON.stringify(dirtyPaths.slice(0, 30))}`)
-  if (dirtyPaths.length > 0) {
-    throw new Error(`P16_IMPLEMENTATION_SOURCE_DIRTY:${dirtyPaths.length}`)
+  const matrixSourceChanges = matrixSourceDirtyPaths(dirtyPaths, {
+    implementationPrefix,
+    catalogPath: relative(repositoryRoot, catalogPath),
+  })
+  console.log(`[P16_SOURCE_STATUS] ${JSON.stringify(matrixSourceChanges.slice(0, 30))}`)
+  if (matrixSourceChanges.length > 0) {
+    throw new Error(`P16_MATRIX_SOURCE_DIRTY:${matrixSourceChanges.length}`)
   }
 
   const stateDir = createMatrixStateDir({
