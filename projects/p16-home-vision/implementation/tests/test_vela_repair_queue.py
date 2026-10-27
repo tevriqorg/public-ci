@@ -414,19 +414,24 @@ class RepairQueueTests(unittest.TestCase):
     def test_s026_process_local_socket_canary_does_not_promote_scenario(self):
         self.assertNotIn('S026', registry())
 
-    def test_s027_false_cleanup_environment_injection_stays_blocked(self):
-        self.assertNotIn('S027', registry())
-        with tempfile.TemporaryDirectory() as d:
-            output = io.StringIO()
-            with patch('p16_soak.verify_source_revision', return_value='a' * 40), \
-                 contextlib.redirect_stdout(output):
-                code = main(['scenario', '--scenario-id', 'S027', '--state', d,
-                             '--source-sha', 'a' * 40])
-            self.assertEqual(code, 1)
-            result = json.loads(output.getvalue())
-            self.assertFalse(result['complete'])
-            self.assertEqual(result['results'][0]['status'], 'BLOCKED')
-            self.assertEqual(result['results'][0]['reason'], 'SCENARIO_NOT_IMPLEMENTED')
+    def test_s027_handler_selects_both_real_injection_oracles(self):
+        captured = {}
+
+        def record_handler(argv, **kwargs):
+            if any('s027_' in argument for argument in argv):
+                captured['argv'] = argv
+                captured.update(kwargs)
+            return lambda _scenario: {'status': 'PASS'}
+
+        with patch('p16_soak.command_handler', side_effect=record_handler):
+            handlers = registry()
+        self.assertIn('S027', handlers)
+        self.assertEqual(captured['expected_test_count'], 2)
+        self.assertTrue(any('test_s027_raw_retention_and_secret_redaction' in argument
+                            for argument in captured['argv']))
+        self.assertTrue(any(
+            'test_s027_authenticated_nvr_reflected_secret_is_redacted_everywhere' in argument
+            for argument in captured['argv']))
 
     def test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling(self):
         from types import SimpleNamespace
@@ -480,7 +485,7 @@ class RepairQueueTests(unittest.TestCase):
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
         self.assertIn('S022', handlers)
-        blocked = {'S026', 'S027', 'S028', 'S029', 'S030'}
+        blocked = {'S026', 'S028', 'S029', 'S030'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )

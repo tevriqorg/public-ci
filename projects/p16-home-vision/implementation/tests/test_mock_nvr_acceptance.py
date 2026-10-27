@@ -1152,7 +1152,7 @@ def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session, case
                 assert "synthetic-stale-nonce" not in repr(result)
 
 
-def test_component_authenticated_nvr_reflected_secret_is_redacted_everywhere(
+def test_s027_authenticated_nvr_reflected_secret_is_redacted_everywhere(
     session, tmp_path, caplog, capsys,
 ):
     """A credential reflected by a hostile synthetic NVR stays out of P16 state."""

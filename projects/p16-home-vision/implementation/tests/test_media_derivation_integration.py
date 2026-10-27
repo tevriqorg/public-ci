@@ -14,7 +14,6 @@ import pytest
 
 from media_derivation.pipeline import DerivationPaths, DerivationPlan, run_derivation
 from media_derivation.probe import probe_source
-from media_derivation.cli import main as media_derivation_main
 
 
 def _files_containing(root: Path, token: bytes) -> list[str]:
@@ -216,7 +215,7 @@ def test_component_multicontainer_codec_matrix_stream_copy_and_pts(
                for pts in selected_pts)
 
 
-def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch, capsys):
+def test_s027_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch):
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.fail("S027 requires ffmpeg/ffprobe; scenario cannot be a skip")
     raw = tmp_path / "source-synthetic.mkv"
@@ -229,16 +228,19 @@ def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatc
     monkeypatch.setenv("P16_NVR_PASSWORD", canary.decode())
     monkeypatch.setenv("P16_NVR_ENDPOINT", "http://198.51.100.23:8000")
     monkeypatch.setenv("P16_HTTP_BIND_HOST", "0.0.0.0")
-    monkeypatch.setattr(sys, "argv", [
-        "p16-media-derive", "--raw", str(raw), "--asset-root", str(asset_root),
-        "--asset-id", "synthetic-s027", "--camera", "synthetic-canary",
-        "--source-start-epoch", "1792872000",
-    ])
-
-    assert media_derivation_main() == 0
-    captured = capsys.readouterr()
-    assert canary.decode() not in captured.out
-    assert canary.decode() not in captured.err
+    completed = subprocess.run(
+        [
+            sys.executable, "-m", "media_derivation.cli",
+            "--raw", str(raw), "--asset-root", str(asset_root),
+            "--asset-id", "synthetic-s027", "--camera", "synthetic-canary",
+            "--source-start-epoch", "1792872000",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, timeout=90, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    assert canary.decode() not in completed.stdout
+    assert canary.decode() not in completed.stderr
     assert raw.is_file()
     assert hashlib.sha256(raw.read_bytes()).hexdigest() == before
     status_path = asset_root / "synthetic-s027" / "status.json"
@@ -246,7 +248,7 @@ def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatc
     assert status["state"] == "derived"
     assert status["raw_deleted"] is False
     assert status["stages"]["raw"] == "done"
-    assert _files_containing(asset_root, canary) == []
+    assert _files_containing(tmp_path, canary) == []
 
     # Mutation canary: prove the independent persisted-file scanner detects an
     # accidental secret leak before trusting its clean result above.
@@ -257,7 +259,7 @@ def test_component_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatc
         assert self_report == ["synthetic-secret-leak-canary.txt"]
     finally:
         injected.unlink(missing_ok=True)
-    assert _files_containing(asset_root, canary) == []
+    assert _files_containing(tmp_path, canary) == []
 
 
 def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
