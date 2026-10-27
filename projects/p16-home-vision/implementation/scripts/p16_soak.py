@@ -193,7 +193,7 @@ def registry():
             cwd=ROOT/'implementation',timeout_seconds=180),
         'S010': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_mock_nvr_acceptance.py::test_s010_digest_challenge_and_invalid_credentials_fail_closed'],
-            cwd=ROOT/'implementation',timeout_seconds=90),
+            cwd=ROOT/'implementation',timeout_seconds=90,expected_test_count=3),
         'S011': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_s011_nvr_faults.py::test_s011_search_503_recovers_after_stable_rescans_without_duplicate',
             'tests/test_s011_nvr_faults.py::test_s011_download_timeout_retries_once_without_duplicate_asset',

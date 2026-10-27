@@ -1098,94 +1098,58 @@ def test_s006_download_faults_quarantine_before_bounded_retry(
     assert mock_nvr.download_count == 2
 
 
-def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session):
-    """S010: valid Digest works; invalid credentials and a wrong nonce fail closed."""
+@pytest.mark.parametrize("case", ["valid", "bad-credentials", "wrong-nonce"])
+def test_s010_digest_challenge_and_invalid_credentials_fail_closed(session, case):
+    """S010's positive and two negative Digest controls execute as separate cases."""
     start = datetime.now(timezone.utc) - timedelta(days=2)
-
-    def seed(case: str):
-        nvr = NvrDevice(
-            id=f"s010-{case}-nvr", name=f"S010 {case}", host="127.0.0.1", timezone="UTC"
-        )
-        camera = CameraTrack(
-            id=f"s010-{case}-camera", nvr_id=nvr.id, track_id="101",
-            camera_name=f"S010 {case}",
-        )
-        session.add(nvr)
-        session.flush()
-        session.add(camera)
-        session.flush()
-        return nvr, camera
-
-    # Positive control: challenge/response with valid credentials and the
-    # accepted nonce reaches the search endpoint and records a successful scan.
-    valid_nvr, valid_camera = seed("valid")
-    with MockHikvisionNvr([]) as valid_mock:
-        with HikvisionIsapiClient(
-            base_url=valid_mock.base_url, username=valid_mock.username,
-            password=valid_mock.password, timeout_seconds=5,
-        ) as client:
-            valid = scan_camera_range(
-                session, nvr=valid_nvr, camera=valid_camera,
-                query_start=start, query_end=start + timedelta(days=1),
-                searcher=client, scan_id="s010-valid-scan",
-            )
-        assert (valid.state, valid.error_code) == ("success", None)
-        assert valid_mock.challenge_count == 1
-        assert valid_mock.authorization_count == 1
-        assert valid_mock.rejected_digest_count == 0
-        assert valid_mock.search_count == 1
-    assert valid.discovered_count == 0
-
-    # Negative control: a genuine challenge followed by bad credentials is
-    # rejected before any search data or source recording can be created.
-    bad_nvr, bad_camera = seed("bad-credentials")
-    with MockHikvisionNvr([]) as bad_mock:
-        with HikvisionIsapiClient(
-            base_url=bad_mock.base_url, username="synthetic-wrong-user",
-            password="synthetic-wrong-password", timeout_seconds=5,
-        ) as client:
-            bad = scan_camera_range(
-                session, nvr=bad_nvr, camera=bad_camera,
-                query_start=start, query_end=start + timedelta(days=1),
-                searcher=client, scan_id="s010-rejected-scan",
-            )
-        assert bad_mock.challenge_count == 1
-        assert bad_mock.rejected_digest_count == 1
-        assert bad_mock.authorization_count == 0
-        assert bad_mock.search_count == 0
-    assert (bad.state, bad.error_code) == ("failed", "NVR_SEARCH_HTTP_403")
-    assert "synthetic-wrong-password" not in repr(bad)
-    bad_scan = session.get(ScanRun, bad.scan_id)
-    assert bad_scan is not None and bad_scan.error_code == "NVR_SEARCH_HTTP_403"
-    assert list(session.scalars(select(SourceRecording).where(
-        SourceRecording.nvr_id == bad_nvr.id))) == []
-
-    # Actual wrong-nonce injection: the client has valid credentials, but the
-    # fixture advertises a nonce different from the server's accepted nonce.
-    nonce_nvr, nonce_camera = seed("wrong-nonce")
-    with MockHikvisionNvr([], challenge_nonce="synthetic-stale-nonce") as nonce_mock:
-        with HikvisionIsapiClient(
-            base_url=nonce_mock.base_url, username=nonce_mock.username,
-            password=nonce_mock.password, timeout_seconds=5,
-        ) as client:
-            wrong_nonce = scan_camera_range(
-                session, nvr=nonce_nvr, camera=nonce_camera,
-                query_start=start, query_end=start + timedelta(days=1),
-                searcher=client, scan_id="s010-wrong-nonce-scan",
-            )
-        assert nonce_mock.challenge_count == 1
-        assert nonce_mock.rejected_digest_count == 1
-        assert nonce_mock.authorization_count == 0
-        assert nonce_mock.search_count == 0
-    assert (wrong_nonce.state, wrong_nonce.error_code) == (
-        "failed", "NVR_SEARCH_HTTP_403"
+    nvr = NvrDevice(
+        id=f"s010-{case}-nvr", name=f"S010 {case}", host="127.0.0.1", timezone="UTC"
     )
-    assert nonce_mock.download_count == 0
-    assert "synthetic-stale-nonce" not in repr(wrong_nonce)
-    nonce_scan = session.get(ScanRun, wrong_nonce.scan_id)
-    assert nonce_scan is not None and nonce_scan.error_code == "NVR_SEARCH_HTTP_403"
-    assert list(session.scalars(select(SourceRecording).where(
-        SourceRecording.nvr_id == nonce_nvr.id))) == []
+    camera = CameraTrack(
+        id=f"s010-{case}-camera", nvr_id=nvr.id, track_id="101",
+        camera_name=f"S010 {case}",
+    )
+    session.add(nvr)
+    session.flush()
+    session.add(camera)
+    session.flush()
+
+    wrong_nonce = case == "wrong-nonce"
+    bad_credentials = case == "bad-credentials"
+    challenge_nonce = "synthetic-stale-nonce" if wrong_nonce else None
+    with MockHikvisionNvr([], challenge_nonce=challenge_nonce) as mock:
+        username = "synthetic-wrong-user" if bad_credentials else mock.username
+        password = "synthetic-wrong-password" if bad_credentials else mock.password
+        with HikvisionIsapiClient(
+            base_url=mock.base_url, username=username, password=password,
+            timeout_seconds=5,
+        ) as client:
+            result = scan_camera_range(
+                session, nvr=nvr, camera=camera,
+                query_start=start, query_end=start + timedelta(days=1),
+                searcher=client, scan_id=f"s010-{case}-scan",
+            )
+
+        assert mock.challenge_count == 1
+        assert mock.search_count == (1 if case == "valid" else 0)
+        if case == "valid":
+            assert (result.state, result.error_code) == ("success", None)
+            assert mock.authorization_count == 1
+            assert mock.rejected_digest_count == 0
+            assert result.discovered_count == 0
+        else:
+            assert mock.authorization_count == 0
+            assert mock.rejected_digest_count == 1
+            assert mock.download_count == 0
+            assert (result.state, result.error_code) == ("failed", "NVR_SEARCH_HTTP_403")
+            scan = session.get(ScanRun, result.scan_id)
+            assert scan is not None and scan.error_code == "NVR_SEARCH_HTTP_403"
+            assert list(session.scalars(select(SourceRecording).where(
+                SourceRecording.nvr_id == nvr.id))) == []
+            if bad_credentials:
+                assert "synthetic-wrong-password" not in repr(result)
+            if wrong_nonce:
+                assert "synthetic-stale-nonce" not in repr(result)
 
 
 def test_component_authenticated_nvr_reflected_secret_is_redacted_everywhere(
