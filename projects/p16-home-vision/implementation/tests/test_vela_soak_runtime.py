@@ -1,8 +1,10 @@
 import copy
 import json
 import sqlite3
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,6 +25,70 @@ def record(**kw):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_s028_process_lock_rejects_competitor_and_recovers_after_owner_death(self):
+        lock_module = ROOT / "implementation/scripts"
+        with tempfile.TemporaryDirectory() as fresh:
+            state = Path(fresh)
+            holder_marker = state / "holder-acquired"
+            holder_code = (
+                "import pathlib,sys,time;"
+                "sys.path.insert(0,sys.argv[1]);"
+                "from vela_soak_runtime import cycle_lock;"
+                "with_holder=cycle_lock(sys.argv[2]);"
+                "ctx=with_holder;ctx.__enter__();"
+                "pathlib.Path(sys.argv[3]).write_text('held');"
+                "time.sleep(60)"
+            )
+            holder = subprocess.Popen(
+                [sys.executable, "-c", holder_code, str(lock_module), fresh,
+                 str(holder_marker)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not holder_marker.exists() and holder.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(holder_marker.exists(), "holder child never acquired cycle_lock")
+                self.assertIsNone(holder.poll(), "holder exited before contention injection")
+
+                contender_code = (
+                    "import sys\n"
+                    "sys.path.insert(0,sys.argv[1])\n"
+                    "from vela_soak_runtime import cycle_lock\n"
+                    "try:\n"
+                    "    with cycle_lock(sys.argv[2]):\n"
+                    "        print('UNEXPECTED_ACQUIRE')\n"
+                    "except BlockingIOError:\n"
+                    "    print('LOCK_REJECTED')"
+                )
+                contender = subprocess.run(
+                    [sys.executable, "-c", contender_code, str(lock_module), fresh],
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+                self.assertEqual(contender.returncode, 0, contender.stderr)
+                self.assertEqual(contender.stdout.strip(), "LOCK_REJECTED")
+
+                holder.terminate()
+                holder.wait(timeout=5)
+                recovery_marker = state / "recovered-acquisition"
+                recovery_code = (
+                    "import pathlib,sys;sys.path.insert(0,sys.argv[1]);"
+                    "from vela_soak_runtime import cycle_lock;"
+                    "ctx=cycle_lock(sys.argv[2]);ctx.__enter__();"
+                    "pathlib.Path(sys.argv[3]).write_text('recovered');ctx.__exit__(None,None,None)"
+                )
+                recovery = subprocess.run(
+                    [sys.executable, "-c", recovery_code, str(lock_module), fresh,
+                     str(recovery_marker)], capture_output=True, text=True,
+                    timeout=5, check=False,
+                )
+                self.assertEqual(recovery.returncode, 0, recovery.stderr)
+                self.assertEqual(recovery_marker.read_text(), "recovered")
+            finally:
+                if holder.poll() is None:
+                    holder.kill()
+                    holder.wait(timeout=5)
+
     def test_component_outage_catchup_keeps_missed_days_and_rejects_second_writer(self):
         with tempfile.TemporaryDirectory() as fresh:
             late_first = record_daily_cycle(
