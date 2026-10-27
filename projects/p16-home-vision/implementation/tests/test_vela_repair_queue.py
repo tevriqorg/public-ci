@@ -465,9 +465,12 @@ class RepairQueueTests(unittest.TestCase):
         with patch('p16_soak.command_handler', side_effect=record_handler):
             handlers = registry()
         self.assertIn('S027', handlers)
-        self.assertEqual(captured['expected_test_count'], 2)
+        self.assertEqual(captured['expected_test_count'], 3)
         self.assertTrue(any('test_s027_raw_retention_and_secret_redaction' in argument
                             for argument in captured['argv']))
+        self.assertTrue(any(
+            'test_s027_cleanup_raw_switch_is_rejected_before_media_processing' in argument
+            for argument in captured['argv']))
         self.assertTrue(any(
             'test_s027_authenticated_nvr_reflected_secret_is_redacted_everywhere' in argument
             for argument in captured['argv']))

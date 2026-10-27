@@ -262,6 +262,28 @@ def test_s027_raw_retention_and_secret_redaction(tmp_path: Path, monkeypatch):
     assert _files_containing(tmp_path, canary) == []
 
 
+def test_s027_cleanup_raw_switch_is_rejected_before_media_processing(tmp_path: Path):
+    """A destructive cleanup request cannot cross the production CLI boundary."""
+    raw = tmp_path / "protected-synthetic-raw.mkv"
+    payload = b"synthetic protected raw bytes\x00" * 64
+    raw.write_bytes(payload)
+    raw_sha = hashlib.sha256(payload).hexdigest()
+    asset_root = tmp_path / "assets"
+    completed = subprocess.run(
+        [
+            sys.executable, "-m", "media_derivation.cli",
+            "--raw", str(raw), "--asset-root", str(asset_root),
+            "--asset-id", "synthetic-s027-cleanup-attempt", "--cleanup-raw",
+        ],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+        check=False, timeout=30,
+    )
+    assert completed.returncode == 2
+    assert "unrecognized arguments: --cleanup-raw" in completed.stderr
+    assert raw.is_file()
+    assert hashlib.sha256(raw.read_bytes()).hexdigest() == raw_sha
+    assert not (asset_root / "synthetic-s027-cleanup-attempt").exists()
+
 def test_s035_ten_minute_derivation_and_large_audio_transcript_are_bounded(
     tmp_path: Path,
 ):
