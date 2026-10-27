@@ -414,6 +414,20 @@ class RepairQueueTests(unittest.TestCase):
     def test_s026_process_local_socket_canary_does_not_promote_scenario(self):
         self.assertNotIn('S026', registry())
 
+    def test_s027_false_cleanup_environment_injection_stays_blocked(self):
+        self.assertNotIn('S027', registry())
+        with tempfile.TemporaryDirectory() as d:
+            output = io.StringIO()
+            with patch('p16_soak.verify_source_revision', return_value='a' * 40), \
+                 contextlib.redirect_stdout(output):
+                code = main(['scenario', '--scenario-id', 'S027', '--state', d,
+                             '--source-sha', 'a' * 40])
+            self.assertEqual(code, 1)
+            result = json.loads(output.getvalue())
+            self.assertFalse(result['complete'])
+            self.assertEqual(result['results'][0]['status'], 'BLOCKED')
+            self.assertEqual(result['results'][0]['reason'], 'SCENARIO_NOT_IMPLEMENTED')
+
     def test_s029_low_disk_guard_blocks_before_handler_and_preserves_sibling(self):
         from types import SimpleNamespace
         from p16_soak import shutil
@@ -465,7 +479,7 @@ class RepairQueueTests(unittest.TestCase):
 
     def test_incomplete_catalog_matrices_remain_unregistered(self):
         handlers = registry()
-        blocked = {'S022', 'S026', 'S028', 'S029', 'S030'}
+        blocked = {'S022', 'S026', 'S027', 'S028', 'S029', 'S030'}
         self.assertEqual(
             {scenario for scenario in blocked if scenario not in handlers}, blocked,
         )

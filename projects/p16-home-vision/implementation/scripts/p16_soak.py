@@ -242,10 +242,9 @@ def registry():
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
         'S025': command_handler(['npx','playwright','test','--config=playwright.config.js','--grep','@S025'],
             cwd=ROOT/'implementation/frontend-r2',timeout_seconds=180,forward_stderr=True),
-        'S027': command_handler([sys.executable,'-m','pytest','-q',
-            'tests/test_media_derivation_integration.py::test_component_raw_retention_and_secret_redaction',
-            'tests/test_mock_nvr_acceptance.py::test_component_authenticated_nvr_reflected_secret_is_redacted_everywhere'],
-            cwd=ROOT/'implementation',timeout_seconds=180),
+        # S027 stays blocked as a complete catalog scenario: its secret
+        # reflection component is real, but the RAW cleanup test currently
+        # injects environment names the product CLI does not consume.
         'S031': command_handler([sys.executable,'-m','pytest','-q',
             'tests/test_vela_mutation_matrix.py::test_s031_current_day_enqueue_canary_rejects_cutoff_mutant',
             'tests/test_vela_mutation_matrix.py::test_s031_future_ending_video_canary_rejects_cutoff_mutant',
