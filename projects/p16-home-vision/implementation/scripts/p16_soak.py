@@ -14,6 +14,27 @@ ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
+def _porcelain_paths(status):
+    """Decode NUL-delimited porcelain-v1 paths, including rename/copy pairs."""
+    entries = status.split(b"\0")
+    paths = []
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if not entry:
+            continue
+        if len(entry) < 4 or entry[2:3] != b" ":
+            raise ValueError("SOURCE_STATUS_INVALID")
+        paths.append(entry[3:])
+        if b"R" in entry[:2] or b"C" in entry[:2]:
+            if index >= len(entries) or not entries[index]:
+                raise ValueError("SOURCE_STATUS_INVALID")
+            paths.append(entries[index])
+            index += 1
+    return paths
+
+
 def verify_source_revision(root, source_sha):
     """Require the evidence revision to identify this clean executable tree."""
     root = Path(root)
@@ -72,10 +93,11 @@ def verify_source_revision(root, source_sha):
         implementation = prefix + "implementation/"
         catalog_paths = {prefix + "design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json"}
         marker_paths = {prefix + "SOURCE_REVISION"}
-    for entry in status.split(b"\0"):
-        if not entry:
-            continue
-        path = entry[3:] if len(entry) >= 3 and entry[2:3] == b" " else entry
+    try:
+        dirty_paths = _porcelain_paths(status)
+    except ValueError:
+        raise ValueError("SOURCE_REVISION_UNAVAILABLE") from None
+    for path in dirty_paths:
         implementation_bytes = implementation.encode("utf-8")
         catalog_bytes = {candidate.encode("utf-8") for candidate in catalog_paths}
         marker_bytes = {candidate.encode("utf-8") for candidate in marker_paths}

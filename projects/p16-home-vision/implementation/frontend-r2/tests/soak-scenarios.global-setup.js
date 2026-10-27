@@ -23,6 +23,24 @@ export function matrixSourceRequired(env = process.env) {
     (env.CI === 'true' && env.GITHUB_REPOSITORY === 'tevriqorg/public-ci')
 }
 
+export function parsePorcelainPaths(status) {
+  const entries = status.split('\0')
+  const paths = []
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    if (!entry) continue
+    if (entry.length < 4 || entry[2] !== ' ') throw new Error('P16_SOURCE_STATUS_INVALID')
+    paths.push(entry.slice(3))
+    if (entry.slice(0, 2).includes('R') || entry.slice(0, 2).includes('C')) {
+      const oldPath = entries[index + 1]
+      if (!oldPath) throw new Error('P16_SOURCE_STATUS_INVALID')
+      paths.push(oldPath)
+      index += 1
+    }
+  }
+  return paths
+}
+
 export function createMatrixStateDir({ runnerTemp, implementationDir, fallbackTemp = tmpdir() }) {
   const parent = resolve(runnerTemp || fallbackTemp)
   mkdirSync(parent, { recursive: true })
@@ -70,10 +88,10 @@ export default async function runRegisteredSoakScenarios() {
     cwd: projectRoot,
   }).toString('utf8').trim()
   const implementationPrefix = `${relative(repositoryRoot, implementationDir).replaceAll('\\', '/')}/`
-  const dirtyPaths = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+  const dirtyStatus = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
     cwd: projectRoot,
-  }).toString('utf8').split('\0').filter(Boolean)
-    .map((entry) => entry.slice(3))
+  }).toString('utf8')
+  const dirtyPaths = parsePorcelainPaths(dirtyStatus)
   const matrixSourceChanges = matrixSourceDirtyPaths(dirtyPaths, {
     implementationPrefix,
     catalogPath: relative(repositoryRoot, catalogPath),

@@ -18,6 +18,28 @@ from p16_soak import enqueue_failures, main, registry, verify_source_revision
 from vela_soak_runtime import command_handler
 
 class RepairQueueTests(unittest.TestCase):
+    def test_source_revision_detects_implementation_rename_old_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            source = root / 'implementation' / 'scripts' / 'runner.py'
+            source.parent.mkdir(parents=True)
+            source.write_text('print("fixture")\n')
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            subprocess.run(['git', 'config', 'user.name', 'P16 fixture'], cwd=root, check=True)
+            subprocess.run(['git', 'config', 'user.email', 'p16-fixture@example.invalid'], cwd=root, check=True)
+            subprocess.run(['git', 'add', 'implementation/scripts/runner.py'], cwd=root, check=True)
+            subprocess.run(['git', 'commit', '-qm', 'fixture'], cwd=root, check=True)
+            sha = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root, check=True,
+                                 capture_output=True, text=True).stdout.strip()
+            destination = root / 'docs' / 'runner.py'
+            destination.parent.mkdir()
+            subprocess.run(['git', 'mv', str(source), str(destination)], cwd=root, check=True)
+            status = subprocess.run(['git', 'status', '--porcelain=v1', '-z'], cwd=root,
+                                    check=True, capture_output=True).stdout
+            self.assertIn(b'R ', status)
+            with self.assertRaisesRegex(ValueError, 'SOURCE_TREE_DIRTY'):
+                verify_source_revision(root, sha)
+
     def test_source_revision_requires_matching_clean_code_tree(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)

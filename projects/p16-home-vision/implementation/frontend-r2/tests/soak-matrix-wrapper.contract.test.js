@@ -7,6 +7,7 @@ import {
   createMatrixStateDir,
   matrixSourceRequired,
   matrixSourceDirtyPaths,
+  parsePorcelainPaths,
   readSourceRevision,
 } from './soak-scenarios.global-setup.js'
 import SoakExecutionReporter from './soak-execution-reporter.js'
@@ -79,6 +80,17 @@ test('matrix setup rejects a changed scenario catalog but ignores unrelated repo
     'implementation/app/domain/archive.py',
     'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json',
   ])
+})
+
+test('matrix dirty guard includes old paths in staged rename and copy records', () => {
+  for (const status of ['R  docs/runner.py\0implementation/scripts/runner.py\0',
+    'C  docs/runner.py\0implementation/scripts/runner.py\0']) {
+    const paths = parsePorcelainPaths(status)
+    assert.deepEqual(matrixSourceDirtyPaths(paths, {
+      implementationPrefix: 'implementation/',
+      catalogPath: 'design/P16R2_VELA_SOAK_G0_SCENARIOS_v1.json',
+    }), ['implementation/scripts/runner.py'])
+  }
 })
 
 test('browser scenario reporter requires exactly one tagged passing test', () => {
