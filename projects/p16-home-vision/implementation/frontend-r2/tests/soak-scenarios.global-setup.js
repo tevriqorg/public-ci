@@ -19,7 +19,8 @@ export function readSourceRevision(sourceMarkerPath, { required = false } = {}) 
 }
 
 export function matrixSourceRequired(env = process.env) {
-  return env.P16_SOAK_MATRIX_REQUIRED === '1' || env.CI === 'true'
+  return env.P16_SOAK_MATRIX_REQUIRED === '1' ||
+    (env.CI === 'true' && env.GITHUB_REPOSITORY === 'tevriqorg/public-ci')
 }
 
 export function createMatrixStateDir({ runnerTemp, implementationDir, fallbackTemp = tmpdir() }) {

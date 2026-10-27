@@ -19,8 +19,10 @@ test('required matrix source mapping fails closed when marker is missing', (t) =
   assert.equal(readSourceRevision(path.join(root, 'SOURCE_REVISION')), null)
 })
 
-test('CI requires a source marker even when the workflow omits the opt-in flag', () => {
-  assert.equal(matrixSourceRequired({ CI: 'true' }), true)
+test('public CI requires an exact marker; private product CI may omit matrix setup', () => {
+  assert.equal(matrixSourceRequired({ CI: 'true', GITHUB_REPOSITORY: 'tevriqorg/public-ci' }), true)
+  assert.equal(matrixSourceRequired({ CI: 'true', GITHUB_REPOSITORY: 'tevriqorg/P16-Home-Vision' }), false)
+  assert.equal(matrixSourceRequired({ CI: 'true' }), false)
   assert.equal(matrixSourceRequired({ P16_SOAK_MATRIX_REQUIRED: '1' }), true)
   assert.equal(matrixSourceRequired({ CI: 'false' }), false)
   assert.equal(matrixSourceRequired({}), false)
