@@ -490,8 +490,8 @@ class RepairQueueTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), blocked)
         for guard in (
-            'if (dirtyPaths.length > 0)',
-            '`P16_IMPLEMENTATION_SOURCE_DIRTY:${dirtyPaths.length}`',
+            'if (matrixSourceChanges.length > 0)',
+            '`P16_MATRIX_SOURCE_DIRTY:${matrixSourceChanges.length}`',
             'catalogIds.length !== scenarioIds.length',
             'records[0].seed !== scenario.seed',
             "records[0].reason !== 'SCENARIO_NOT_IMPLEMENTED'",
