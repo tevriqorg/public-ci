@@ -70,6 +70,35 @@ jobs:
           JSON
       - name: Set CI version metadata to actual source
         run: echo "P14_BUILD_SUFFIX=p14-${SOURCE_SHA:0:8}" >> "$GITHUB_ENV"
+      - name: Prepare loopback-only synthetic connectivity probe and UID isolation script
+        run: |
+          mkdir -p /tmp/p14-network-probe
+          printf '%s\n' '{"p14-server":"synthetic connectivity probe only"}' > /tmp/p14-network-probe/healthz
+          python3 -m http.server 8014 --bind 127.0.0.1 --directory /tmp/p14-network-probe > /tmp/p14-network-probe.log 2>&1 &
+          cat > /tmp/p14-uid-isolation.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          mkdir -p app/build/p14-evidence
+          probe() {
+            adb shell am instrument -w -r -e class "me.rerere.rikkahub.data.remote.p14.P14RecoveryInstrumentedTest#$1" -e p14BaseUrl http://10.0.2.2:8014/v1 me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "app/build/p14-evidence/$1.txt"
+            grep -q 'OK (' "app/build/p14-evidence/$1.txt"
+            ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED' "app/build/p14-evidence/$1.txt"
+          }
+          curl --retry 5 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8014/healthz > app/build/p14-evidence/probe-alive-before.txt
+          probe networkOnline
+          adb root
+          adb wait-for-device
+          APP_UID="$(adb shell stat -c %u /data/user/0/me.rerere.rikkahub.debug | tr -d '\r')"
+          [[ "$APP_UID" =~ ^[0-9]+$ ]]
+          trap 'adb shell iptables -D OUTPUT -m owner --uid-owner "$APP_UID" -j REJECT >/dev/null 2>&1 || true; adb shell ip6tables -D OUTPUT -m owner --uid-owner "$APP_UID" -j REJECT >/dev/null 2>&1 || true' EXIT
+          adb shell iptables -I OUTPUT -m owner --uid-owner "$APP_UID" -j REJECT
+          adb shell ip6tables -I OUTPUT -m owner --uid-owner "$APP_UID" -j REJECT
+          adb shell iptables -L OUTPUT -n -v > app/build/p14-evidence/uid-ipv4-block.txt
+          adb shell ip6tables -L OUTPUT -n -v > app/build/p14-evidence/uid-ipv6-block.txt
+          probe networkOffline
+          curl -fsS http://127.0.0.1:8014/healthz > app/build/p14-evidence/probe-alive-after.txt
+          bash scripts/p14_inbox_emulator_evidence.sh
+          SH
       - name: Enable and require hardware-accelerated isolated emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -96,11 +125,7 @@ jobs:
             adb install -r app/build/outputs/apk/debug/app-x86_64-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell pm grant me.rerere.rikkahub.debug android.permission.POST_NOTIFICATIONS
-            adb shell svc wifi disable
-            adb shell svc data disable
-            mkdir -p app/build/p14-evidence
-            adb shell dumpsys connectivity > app/build/p14-evidence/network-offline-state.txt
-            bash scripts/p14_inbox_emulator_evidence.sh
+            bash /tmp/p14-uid-isolation.sh
       - name: Upload UI test report
         if: always()
         uses: actions/upload-artifact@v4
