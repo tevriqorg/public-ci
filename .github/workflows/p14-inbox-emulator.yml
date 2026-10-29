@@ -90,6 +90,8 @@ jobs:
           script: |
             chmod +x gradlew
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
+            adb install -r app/build/outputs/apk/debug/app-x86_64-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             bash scripts/p14_inbox_emulator_evidence.sh
       - name: Upload UI test report
         if: always()
