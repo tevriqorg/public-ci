@@ -69,6 +69,12 @@ jobs:
           JSON
       - name: Set CI version metadata to actual source
         run: echo "P14_BUILD_SUFFIX=p14-${SOURCE_SHA:0:8}" >> "$GITHUB_ENV"
+      - name: Enable and require hardware-accelerated isolated emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
       - name: Run Inbox UI on clean Android emulator, synthetic Entry only
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -77,8 +83,8 @@ jobs:
           arch: x86_64
           profile: pixel_6
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
-          disable-animations: false
-          emulator-boot-timeout: 1200
+          disable-animations: true
+          emulator-boot-timeout: 300
           force-avd-creation: true
           script: |
             chmod +x gradlew
