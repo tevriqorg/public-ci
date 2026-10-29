@@ -27,6 +27,7 @@ jobs:
           repository: tevriqorg/rikkahub
           ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
+          submodules: recursive
       - name: Verify source identity
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - name: JDK 21
