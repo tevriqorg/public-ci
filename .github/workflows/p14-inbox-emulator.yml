@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   inbox-android-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
@@ -75,6 +75,9 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          sudo chmod 666 /dev/kvm
+          ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
       - name: Run Inbox UI on clean Android emulator, synthetic Entry only
         uses: reactivecircus/android-emulator-runner@v2
