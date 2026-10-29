@@ -146,6 +146,10 @@ jobs:
           emulator-boot-timeout: 300
           force-avd-creation: true
           script: |
+            mkdir -p app/build/p14-evidence
+            adb shell dumpsys activity lastanr > app/build/p14-evidence/emulator-last-anr-before.txt
+            adb shell am force-stop com.google.android.apps.nexuslauncher
+            adb shell pm disable-user --user 0 com.google.android.apps.nexuslauncher > app/build/p14-evidence/isolated-launcher-disabled.txt
             chmod +x gradlew
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
             adb install -r app/build/outputs/apk/debug/app-x86_64-debug.apk
