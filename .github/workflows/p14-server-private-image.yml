@@ -53,7 +53,7 @@ jobs:
           archive=target.parent/'p14-private-source.tar.gz';archive.write_bytes(raw)
           with tarfile.open(archive) as t:
               roots={m.name.split('/')[0] for m in t.getmembers()};assert len(roots)==1
-              root=roots.pop();assert root.endswith(sha[:7])
+              root=roots.pop();assert root.endswith(sha)
               selected=[]
               for m in t.getmembers():
                   rel=m.name.partition('/')[2]
