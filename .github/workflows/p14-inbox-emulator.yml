@@ -121,10 +121,14 @@ jobs:
           force-avd-creation: true
           script: |
             chmod +x gradlew
-            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest,me.rerere.rikkahub.ui.activity.P14InboxLauncherInstrumentedTest --stacktrace
+            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
             adb install -r app/build/outputs/apk/debug/app-x86_64-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell pm grant me.rerere.rikkahub.debug android.permission.POST_NOTIFICATIONS
+            mkdir -p app/build/p14-evidence
+            adb shell am instrument -w -r -e class me.rerere.rikkahub.ui.activity.P14InboxLauncherInstrumentedTest me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/p14-evidence/launcher.txt
+            grep -q 'OK (1 test)' app/build/p14-evidence/launcher.txt
+            ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED' app/build/p14-evidence/launcher.txt
             bash /tmp/p14-uid-isolation.sh
       - name: Upload UI test report
         if: always()
