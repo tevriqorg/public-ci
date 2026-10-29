@@ -92,6 +92,11 @@ jobs:
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
             adb install -r app/build/outputs/apk/debug/app-x86_64-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell pm grant me.rerere.rikkahub.debug android.permission.POST_NOTIFICATIONS
+            adb shell svc wifi disable
+            adb shell svc data disable
+            mkdir -p app/build/p14-evidence
+            adb shell dumpsys connectivity > app/build/p14-evidence/network-offline-state.txt
             bash scripts/p14_inbox_emulator_evidence.sh
       - name: Upload UI test report
         if: always()
