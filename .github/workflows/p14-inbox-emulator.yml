@@ -121,7 +121,7 @@ jobs:
           force-avd-creation: true
           script: |
             chmod +x gradlew
-            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
+            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest,me.rerere.rikkahub.ui.activity.P14InboxLauncherInstrumentedTest --stacktrace
             adb install -r app/build/outputs/apk/debug/app-x86_64-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell pm grant me.rerere.rikkahub.debug android.permission.POST_NOTIFICATIONS
