@@ -3,6 +3,11 @@ name: P14 Inbox UI on Android emulator (synthetic, isolated)
 on:
   workflow_dispatch:
     inputs:
+      live_hermes:
+        description: Opt-in isolated real Hermes acceptance (temporary private test credentials required)
+        required: false
+        type: boolean
+        default: false
       source_sha:
         description: Exact public RikkaHub Inbox branch SHA
         required: true
@@ -134,7 +139,23 @@ jobs:
           sudo chmod 666 /dev/kvm
           ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
+      - name: Connect disposable private acceptance node
+        if: inputs.live_hermes
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c
+        with:
+          authkey: ${{ secrets.P14_LIVE_TS_AUTHKEY }}
+          hostname: p14-live-ci-${{ github.run_id }}
+          args: --accept-dns=false --accept-routes=false
+          log-mode: quiet
+      - name: Bridge isolated test Server to emulator host alias
+        if: inputs.live_hermes
+        run: |
+          curl --connect-timeout 15 --max-time 30 -fsS http://100.84.55.11:18144/healthz
+          python3 scripts/p14_live_test_proxy.py > /tmp/p14-live-proxy.log 2>&1 &
       - name: Run Inbox UI on clean Android emulator, synthetic Entry only
+        env:
+          P14_LIVE_ENABLED: ${{ inputs.live_hermes }}
+          P14_LIVE_TEST_TOKEN: ${{ secrets.P14_LIVE_TEST_TOKEN }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -161,6 +182,7 @@ jobs:
             ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED' app/build/p14-evidence/launcher.txt
             bash /tmp/p14-high-fidelity-tests.sh
             bash /tmp/p14-uid-isolation.sh
+            if [ "$P14_LIVE_ENABLED" = "true" ]; then adb shell am instrument -w -r -e p14LiveHermes true -e p14SyntheticFixture true -e p14BaseUrl http://10.0.2.2:18144/v1 -e p14TestToken "$P14_LIVE_TEST_TOKEN" -e class me.rerere.rikkahub.ui.activity.P14LiveHermesInstrumentedTest me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner > app/build/p14-evidence/live-hermes.txt; cat app/build/p14-evidence/live-hermes.txt; adb pull /sdcard/Android/data/me.rerere.rikkahub.debug/files/ci-additional/p14-live-hermes app/build/p14-evidence/live-hermes; grep -Fq 'OK (1 test)' app/build/p14-evidence/live-hermes.txt; ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED' app/build/p14-evidence/live-hermes.txt; fi
       - name: Upload UI test report
         if: always()
         uses: actions/upload-artifact@v4
