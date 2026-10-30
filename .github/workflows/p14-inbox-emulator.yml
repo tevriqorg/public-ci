@@ -125,6 +125,7 @@ jobs:
           }
           run_test revisions me.rerere.rikkahub.data.remote.p14.P14EntryRevisionInstrumentedTest '9 tests'
           run_test visual me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#visualJourney '1 test'
+          run_test native-chat me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#nativeChatExchange '1 test'
           run_test attachments me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#attachmentHandoff '1 test'
           run_test seed-editor-recovery me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#seedEditRecovery '1 test'
           adb shell am force-stop me.rerere.rikkahub.debug
