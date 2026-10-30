@@ -145,7 +145,7 @@ jobs:
         with:
           authkey: ${{ secrets.P14_LIVE_TS_AUTHKEY }}
           hostname: p14-live-ci-${{ github.run_id }}
-          args: --accept-dns=false --accept-routes=false
+          args: --accept-dns=false
           log-mode: quiet
       - name: Bridge isolated test Server to emulator host alias
         if: inputs.live_hermes
