@@ -35,11 +35,12 @@ jobs:
           submodules: recursive
       - name: Verify source identity
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - name: JDK 21
+      - name: JDK 21 (preinstalled Temurin, avoid JetBrains remote rate limit)
         uses: actions/setup-java@v4
         with:
-          distribution: jetbrains
+          distribution: temurin
           java-version: '21'
+          check-latest: false
           cache: gradle
       - name: pnpm 11
         uses: pnpm/action-setup@v4
