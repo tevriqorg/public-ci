@@ -173,9 +173,18 @@ jobs:
             adb shell am force-stop com.google.android.apps.nexuslauncher
             adb shell pm disable-user --user 0 com.google.android.apps.nexuslauncher > app/build/p14-evidence/isolated-launcher-disabled.txt
             chmod +x gradlew
-            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
-            adb install -r app/build/outputs/apk/debug/app-x86_64-debug.apk
-            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            if grep -q 'create("github")' app/build.gradle.kts; then
+              connected_task=:app:connectedGithubDebugAndroidTest
+            else
+              connected_task=:app:connectedDebugAndroidTest
+            fi
+            ./gradlew "$connected_task" -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest --stacktrace
+            mapfile -t app_apks < <(find app/build/outputs/apk -type f -name '*x86_64*debug.apk' | sort)
+            mapfile -t test_apks < <(find app/build/outputs/apk -type f -name '*androidTest.apk' | sort)
+            test "${#app_apks[@]}" -eq 1
+            test "${#test_apks[@]}" -eq 1
+            adb install -r "${app_apks[0]}"
+            adb install -r "${test_apks[0]}"
             adb shell pm grant me.rerere.rikkahub.debug android.permission.POST_NOTIFICATIONS
             mkdir -p app/build/p14-evidence
             adb shell am instrument -w -r -e class me.rerere.rikkahub.ui.activity.P14InboxLauncherInstrumentedTest me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/p14-evidence/launcher.txt
