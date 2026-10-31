@@ -85,7 +85,7 @@ def main():
                     "authority": "tevriqorg/P14-Entry#51",
                     "source_sha": args.source_sha, "package": EXPECTED_PACKAGE,
                     "abi": "arm64-v8a", "certificate_sha256": EXPECTED_CERT,
-                    "signed_apk_sha256": sha256, "release_status": "test-only-not-published"}
+                    "signed_apk_sha256": sha256, "release_status": "test-only-ci-candidate"}
         meta = Path(workdir) / "manifest.json"
         meta.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         shutil.move(str(signed), str(dest))

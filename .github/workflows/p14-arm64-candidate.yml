@@ -107,7 +107,7 @@ jobs:
   fixed-sign:
     name: Fixed-sign and verify P14 APK (GitHub Actions)
     needs: android-arm64
-    if: github.repository == 'tevriqorg/public-ci' && github.ref == 'refs/heads/main'
+    if: github.repository == 'tevriqorg/public-ci' && github.ref == 'refs/heads/main' && (vars.P14_SIGNING_READY == 'true' || inputs.publish_test_release == true)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: p14-test-signing

@@ -19,7 +19,10 @@ Execute once on that machine in an authenticated gh CLI terminal (NO signing occ
     base64 -w0 "$dir/keystore.password" | gh secret set P14_TEST_KEYSTORE_PASSWORD_B64 -R tevriqorg/public-ci --env p14-test-signing
     base64 -w0 "$dir/certificate.der" | gh secret set P14_TEST_SIGNER_CERT_DER_B64 -R tevriqorg/public-ci --env p14-test-signing
     gh secret list -R tevriqorg/public-ci --env p14-test-signing
+    gh variable set P14_SIGNING_READY -b true -R tevriqorg/public-ci
 
+Until P14_SIGNING_READY=true, the build job remains usable while signing is skipped.
+Only set the variable true AFTER all three secrets have been populated.
 Do not store the key or password in Git, PR descriptions, action logs or chat.
 This once-only transfer does not compile or sign APK files on the VPS.
 
