@@ -79,13 +79,32 @@ jobs:
         run: echo "P14_BUILD_SUFFIX=p14-${SOURCE_SHA:0:8}" >> "$GITHUB_ENV"
       - name: Run P14 JVM checks and build ARM64
         run: |
+          set -euo pipefail
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --tests "me.rerere.rikkahub.data.remote.p14.*" --tests "me.rerere.rikkahub.ui.activity.P14InboxPresentationTest" :app:compileDebugAndroidTestKotlin :app:assembleDebug --stacktrace
+          if grep -q 'create("github")' app/build.gradle.kts; then
+            # Upstream 3.1.x introduces github/play distribution flavors.
+            test_task=:app:testGithubDebugUnitTest
+            android_test_task=:app:compileGithubDebugAndroidTestKotlin
+            apk_task=:app:assembleGithubDebug
+          else
+            # P14 2.5.6 recovery baseline has no distribution flavors.
+            test_task=:app:testDebugUnitTest
+            android_test_task=:app:compileDebugAndroidTestKotlin
+            apk_task=:app:assembleDebug
+          fi
+          ./gradlew "$test_task" --tests "me.rerere.rikkahub.data.remote.p14.*" --tests "me.rerere.rikkahub.ui.activity.P14InboxPresentationTest" "$android_test_task" "$apk_task" --stacktrace
       - name: Validate ARM64 candidate and record provenance
         run: |
           set -euo pipefail
           mkdir -p p14-candidate
-          apk=app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+          # Pick exactly one ARM64 debug APK; packaging path differs with flavors.
+          mapfile -t candidates < <(find app/build/outputs/apk -type f -name '*arm64-v8a*debug.apk' | sort)
+          test "${#candidates[@]}" -eq 1 || {
+            printf 'Expected one ARM64 debug APK, found %d\n' "${#candidates[@]}" >&2
+            printf '%s\n' "${candidates[@]}" >&2
+            exit 1
+          }
+          apk="${candidates[0]}"
           test -s "$apk"
           unzip -Z1 "$apk" | grep -m1 '^lib/arm64-v8a/' > p14-candidate/abi-proof.txt
           buildtools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
