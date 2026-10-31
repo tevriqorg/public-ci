@@ -124,6 +124,13 @@ jobs:
             grep -Fq "OK ($count)" "app/build/p14-evidence/$name.txt"
             ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED' "app/build/p14-evidence/$name.txt"
           }
+          # Legacy 2.5.6 builds do not yet have the new full-chain migration
+          # fixture; only execute it on branches containing the test source.
+          # The fixture creates separate synthetic v30 and P14 v6 databases,
+          # without touching the owner's files or connected credentials.
+          if [ -f app/src/androidTest/java/me/rerere/rikkahub/data/db/migrations/P14Upgrade30To32PreservationTest.kt ]; then
+            run_test upgrade-room me.rerere.rikkahub.data.db.migrations.P14Upgrade30To32PreservationTest '1 test'
+          fi
           run_test revisions me.rerere.rikkahub.data.remote.p14.P14EntryRevisionInstrumentedTest '9 tests'
           run_test visual me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#visualJourney '1 test'
           run_test native-chat me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#nativeChatExchange '1 test'
