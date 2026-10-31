@@ -1,13 +1,18 @@
-name: P14 ARM64 candidate build (UNSIGNED)
+name: P14 ARM64 candidate build + fixed signing
 
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Exact 40-char tevriqorg/rikkahub Recovery SHA
+        description: Exact 40-char tevriqorg/rikkahub candidate SHA
         required: true
         type: string
-        default: 'b0c2c943017f9b9285ccc86146ddaa15a03d6ac3'
+        default: 'deaec054f4411e3d97e64329359a55cc8d3369f2'
+      publish_test_release:
+        description: Publish optional test-only release in public-ci repo
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -88,7 +93,7 @@ jobs:
           grep -q "name='me.rerere.rikkahub.debug'" p14-candidate/package-proof.txt
           sha256sum "$apk" > p14-candidate/UNSIGNED-SHA256SUMS
           printf '%s\n' "$SOURCE_SHA" > p14-candidate/SOURCE_SHA
-          printf '%s\n' 'UNSIGNED CI ARTIFACT: NOT FOR FINAL INSTALL. Must be signed on Tokyo with scripts/p14_sign_fixed_candidate.py and certificate dfa33df904e4eb3ca30fdc61a1817dbec36d131a94a594663f7d79522430cc94' > p14-candidate/README.txt
+          printf '%s\n' 'INTERMEDIATE UNSIGNED FILE. Fixed signing follows in a separate GitHub Actions job using certificate dfa33df904e4eb3ca30fdc61a1817dbec36d131a94a594663f7d79522430cc94' > p14-candidate/README.txt
           cp "$apk" p14-candidate/app-arm64-v8a-UNSIGNED.apk
       - name: Upload unsigned ARM64 candidate
         uses: actions/upload-artifact@v4
@@ -97,3 +102,93 @@ jobs:
           path: p14-candidate/
           retention-days: 14
           if-no-files-found: error
+
+
+  fixed-sign:
+    name: Fixed-sign and verify P14 APK (GitHub Actions)
+    needs: android-arm64
+    if: github.repository == 'tevriqorg/public-ci' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: p14-test-signing
+    permissions:
+      contents: write # Only needed for explicit optional release publishing
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      EXPECTED_CERT: dfa33df904e4eb3ca30fdc61a1817dbec36d131a94a594663f7d79522430cc94
+    steps:
+      - name: Checkout trusted CI signing script, not Android source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download compiled unsigned APK from same workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: p14-arm64-UNSIGNED-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/p14-unsigned
+
+      - name: Restore existing pinned signing identity (secret job only)
+        env:
+          P12_B64: ${{ secrets.P14_TEST_KEYSTORE_P12_B64 }}
+          PASS_B64: ${{ secrets.P14_TEST_KEYSTORE_PASSWORD_B64 }}
+          CERT_B64: ${{ secrets.P14_TEST_SIGNER_CERT_DER_B64 }}
+        run: |
+          set -euo pipefail
+          [[ -n "$P12_B64" && -n "$PASS_B64" && -n "$CERT_B64" ]] || {
+            echo "::error::Please configure the 3 P14_TEST_*_B64 environment secrets first."
+            exit 1
+          }
+          test "$(cat "$RUNNER_TEMP/p14-unsigned/SOURCE_SHA")" = "$SOURCE_SHA"
+          umask 077
+          install -d -m 700 "$RUNNER_TEMP/p14-signing"
+          printf '%s' "$P12_B64" | base64 -d > "$RUNNER_TEMP/p14-signing/p14-fixed.p12"
+          printf '%s' "$PASS_B64" | base64 -d > "$RUNNER_TEMP/p14-signing/keystore.password"
+          printf '%s' "$CERT_B64" | base64 -d > "$RUNNER_TEMP/p14-signing/certificate.der"
+          chmod 600 "$RUNNER_TEMP/p14-signing/"*
+          [[ "$(sha256sum "$RUNNER_TEMP/p14-signing/certificate.der" | cut -d' ' -f1)" = "$EXPECTED_CERT" ]] || {
+            echo "::error::The certificate does not match existing P14 test identity."
+            exit 1
+          }
+          echo "Historical P14 test cert validated without printing secrets."
+
+      - name: Sign and verify APK using Android apksigner
+        run: |
+          set -euo pipefail
+          buildtools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -x "$buildtools/aapt" && test -x "$buildtools/apksigner"
+          export PATH="$buildtools:$PATH"
+          umask 077
+          install -d -m 700 "$RUNNER_TEMP/p14-signed"
+          short="$(printf '%s' "$SOURCE_SHA" | cut -c1-8)"
+          file="P14-Inbox-$short-fixed-arm64.apk"
+          python3 scripts/p14_fixed_sign.py             --input "$RUNNER_TEMP/p14-unsigned/app-arm64-v8a-UNSIGNED.apk"             --output "$RUNNER_TEMP/p14-signed/$file"             --source-sha "$SOURCE_SHA"             --signing-dir "$RUNNER_TEMP/p14-signing"
+          (cd "$RUNNER_TEMP/p14-signed" && sha256sum "$file" > SHA256SUMS)
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/p14-signed/SOURCE_SHA"
+          printf '%s\n' 'P14 TEST ONLY: fixed-signed APK; not formal release or Hermes acceptance.' > "$RUNNER_TEMP/p14-signed/README.txt"
+          rm -f "$RUNNER_TEMP/p14-signing/"*
+
+      - name: Upload installable fixed-signed ARM64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: p14-arm64-FIXED-SIGNED-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/p14-signed/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish test-only Release when explicitly requested
+        if: inputs.publish_test_release == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="p14-test-$SOURCE_SHA"
+          short="$(printf '%s' "$SOURCE_SHA" | cut -c1-8)"
+          apk="$RUNNER_TEMP/p14-signed/P14-Inbox-$short-fixed-arm64.apk"
+          manifest="$RUNNER_TEMP/p14-signed/P14-Inbox-$short-fixed-arm64.manifest.json"
+          ! gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || {
+            echo "::error::Existing signed tag; refusing to overwrite."
+            exit 1
+          }
+          printf '%s\n' "TEST ONLY: source tevriqorg/rikkahub@$SOURCE_SHA"             "Fixed P14 certificate: $EXPECTED_CERT"             "GitHub Actions build and signing run: $GITHUB_RUN_ID"             "Not a formal P14 release or physical-device acceptance." > "$RUNNER_TEMP/p14-signed/notes.txt"
+          gh release create "$tag" "$apk" "$manifest" "$RUNNER_TEMP/p14-signed/SHA256SUMS"             -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"             --title "P14 fixed-signed TEST APK $short"             --prerelease --notes-file "$RUNNER_TEMP/p14-signed/notes.txt"
