@@ -118,11 +118,20 @@ jobs:
           adb shell settings put secure show_ime_with_hard_keyboard 1
           adb shell cmd uimode night no
           adb shell ime list -s > app/build/p14-evidence/ime.txt
+          failed_gates=0
           run_test() {
             local name="$1" klass="$2" count="$3"
-            adb shell am instrument -w -r -e p14SyntheticFixture true -e additionalTestOutputDir /sdcard/Android/data/me.rerere.rikkahub.debug/files/ci-additional -e class "$klass" me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "app/build/p14-evidence/$name.txt"
-            grep -Fq "OK ($count)" "app/build/p14-evidence/$name.txt"
-            ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED' "app/build/p14-evidence/$name.txt"
+            # Do not hide a failure, but continue independent synthetic gates.
+            # Previously visualJourney blocked native chat and attachment tests
+            # so unrelated regressions needed a new 15-minute emulator run.
+            if adb shell am instrument -w -r -e p14SyntheticFixture true -e additionalTestOutputDir /sdcard/Android/data/me.rerere.rikkahub.debug/files/ci-additional -e class "$klass" me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "app/build/p14-evidence/$name.txt" &&
+               grep -Fq "OK ($count)" "app/build/p14-evidence/$name.txt" &&
+               ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED' "app/build/p14-evidence/$name.txt"; then
+              echo "P14 gate PASS: $name"
+            else
+              echo "::error::P14 gate FAILED: $name"
+              failed_gates=$((failed_gates + 1))
+            fi
           }
           # Legacy 2.5.6 builds do not yet have the new full-chain migration
           # fixture; only execute it on branches containing the test source.
@@ -141,6 +150,8 @@ jobs:
           run_test seed-editor-recovery me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#seedEditRecovery '1 test'
           adb shell am force-stop me.rerere.rikkahub.debug
           run_test verify-editor-recovery me.rerere.rikkahub.ui.activity.P14HighFidelityVisualInstrumentedTest#verifyEditRecovery '1 test'
+          echo "P14 independent synthetic gate failures: $failed_gates"
+          test "$failed_gates" -eq 0
           SH
       - name: Enable and require hardware-accelerated isolated emulator
         run: |
