@@ -188,3 +188,43 @@ def test_archive_passwords_are_not_placed_in_argv(tmp_path: Path, monkeypatch):
         assert password not in " ".join(argv)
     assert seen[0][0][seen[0][0].index("-p")] == "-p"
     assert seen[1][0][1] == "t"
+
+
+def test_pty_password_fallback_requires_echo_off(tmp_path: Path):
+    """Recover a password-read terminal even if 7-Zip's prompt was lost."""
+    from transfer_hub.engines import _run_password_prompt
+
+    script = tmp_path / "quiet_password_reader.py"
+    script.write_text(
+        "import sys, termios\n"
+        "fd = sys.stdin.fileno()\n"
+        "attrs = termios.tcgetattr(fd)\n"
+        "attrs[3] &= ~termios.ECHO\n"
+        "termios.tcsetattr(fd, termios.TCSANOW, attrs)\n"
+        "value = sys.stdin.readline().rstrip('\\n')\n"
+        "sys.exit(0 if value == 'diagnostic-only-password' else 3)\n"
+    )
+    assert _run_password_prompt(
+        [sys.executable, str(script)],
+        "diagnostic-only-password",
+        lambda: False,
+        fallback_after_seconds=0.2,
+        idle_timeout_seconds=3.0,
+    ) == []
+
+
+def test_pty_password_does_not_enter_echoing_terminal_and_times_out(tmp_path: Path):
+    """No prompt + ECHO on must time out, not disclose a password."""
+    import pytest
+    from transfer_hub.engines import EngineError, _run_password_prompt
+
+    script = tmp_path / "silent_terminal.py"
+    script.write_text("import time\ntime.sleep(10)\n")
+    with pytest.raises(EngineError, match="PTY idle timeout"):
+        _run_password_prompt(
+            [sys.executable, str(script)],
+            "diagnostic-only-password",
+            lambda: False,
+            fallback_after_seconds=0.1,
+            idle_timeout_seconds=0.5,
+        )
