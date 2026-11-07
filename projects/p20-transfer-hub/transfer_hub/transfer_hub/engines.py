@@ -148,6 +148,9 @@ def _run_password_prompt(
     argv: list[str],
     password: str,
     cancel: Callable[[], bool],
+    *,
+    fallback_after_seconds: float = 3.0,
+    idle_timeout_seconds: float = 600.0,
 ) -> list[str]:
     """Run a password-prompting CLI on a real controlling PTY.
 
@@ -160,15 +163,20 @@ def _run_password_prompt(
         raise EngineError("archive password contains unsupported line breaks")
     import pty
     import select
+    import termios
 
     pid, master = pty.fork()
     if pid == 0:
         env = {**os.environ, "LC_ALL": "C"}
         os.execvpe(argv[0], argv, env)
 
+    # Keep only diagnostic tail and a separate rolling prompt window. A long
+    # running 7-Zip job must not grow this buffer without bound.
     output = bytearray()
+    prompt_tail = b""
     sent_prompts = 0
     prompt_re = re.compile(rb"(?:Enter|Reenter) password[^:\r\n]*:", re.I)
+    last_activity = time.monotonic()
     status = None
     exit_seen_at = None
     try:
@@ -189,13 +197,37 @@ def _run_password_prompt(
                     chunk = b""
                     eof = True
                 if chunk:
+                    now = time.monotonic()
+                    last_activity = now
                     output.extend(chunk)
-                    prompts = len(prompt_re.findall(output))
-                    while sent_prompts < prompts:
-                        os.write(master, (password + "\n").encode())
-                        sent_prompts += 1
+                    if len(output) > 65536:
+                        del output[:-65536]
+                    scan = prompt_tail + chunk
+                    for match in prompt_re.finditer(scan):
+                        # Ignore prompt already present in the previous tail.
+                        if match.end() > len(prompt_tail):
+                            os.write(master, (password + "\n").encode())
+                            sent_prompts += 1
+                            last_activity = time.monotonic()
+                    prompt_tail = scan[-256:]
                 else:
                     eof = True
+
+            now = time.monotonic()
+            if status is None and sent_prompts == 0 and now - last_activity >= fallback_after_seconds:
+                # 7-Zip sometimes hides/garbles the prompt in PTY output. Only
+                # inject when the terminal has ECHO off (password-read mode).
+                # Never send a password blindly to an echoing terminal.
+                try:
+                    awaiting_secret = not (termios.tcgetattr(master)[3] & termios.ECHO)
+                except (OSError, termios.error):
+                    awaiting_secret = False
+                if awaiting_secret:
+                    os.write(master, (password + "\n").encode())
+                    sent_prompts += 1
+                    last_activity = now
+            if status is None and now - last_activity >= idle_timeout_seconds:
+                raise EngineError("7-Zip PTY idle timeout (password interaction or process stalled)")
 
             if status is None:
                 waited, child_status = os.waitpid(pid, os.WNOHANG)
@@ -207,7 +239,7 @@ def _run_password_prompt(
                     break
 
         rc = os.waitstatus_to_exitcode(status)
-        decoded = output.decode(errors="replace")
+        decoded = output.decode(errors="replace").replace(password, "<redacted>")
         safe_lines = [line.strip()[:500] for line in re.split(r"[\r\n]+", decoded) if line.strip()]
         if rc != 0:
             detail = " | ".join(safe_lines[-8:])
