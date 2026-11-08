@@ -1,12 +1,13 @@
 {
   "name": "p20-transfer-hub-web",
   "private": true,
-  "version": "0.5.16",
+  "version": "0.5.17",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 17620",
     "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 17620"
+    "preview": "vite preview --host 127.0.0.1 --port 17620",
+    "test:receiver": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",

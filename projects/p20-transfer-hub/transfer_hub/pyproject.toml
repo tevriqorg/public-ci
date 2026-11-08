@@ -1,6 +1,6 @@
 [project]
 name = "p20-transfer-hub"
-version = "0.5.16"
+version = "0.5.17"
 description = "Tokyo Transfer Hub backend for P20"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,4 +1,4 @@
-name: P20 0.5.16 public CI snapshot
+name: P20 0.5.17 public CI snapshot
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish immutable P20 0.5.16 candidate image
+        description: Publish immutable P20 0.5.17 candidate image
         type: boolean
         required: true
         default: false
@@ -37,10 +37,19 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import json
-          assert 'version = "0.5.16"' in Path('transfer_hub/pyproject.toml').read_text()
-          assert '__version__ = "0.5.16"' in Path('transfer_hub/transfer_hub/__init__.py').read_text()
-          assert json.loads(Path('transfer_hub/web/package.json').read_text())['version'] == '0.5.16'
+          assert 'version = "0.5.17"' in Path('transfer_hub/pyproject.toml').read_text()
+          assert '__version__ = "0.5.17"' in Path('transfer_hub/transfer_hub/__init__.py').read_text()
+          assert json.loads(Path('transfer_hub/web/package.json').read_text())['version'] == '0.5.17'
           PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Browser Receiver regression and production build
+        working-directory: projects/p20-transfer-hub/transfer_hub/web
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:receiver
+          npm run build
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -65,5 +74,5 @@ jobs:
           file: projects/p20-transfer-hub/transfer_hub/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/tevriqorg/public-ci:p20-transfer-hub-0.5.16-rc2
+          tags: ghcr.io/tevriqorg/public-ci:p20-transfer-hub-0.5.17-rc1
           provenance: false
