@@ -213,10 +213,16 @@ async function extractZip(artifacts: ResolvedArtifact[], ticket: ReceiverTicket,
     })
   }
 
+  // A bounded in-memory fallback is intentionally desktop-only: on insecure
+  // HTTP Tailnet origins OPFS is unavailable, and QQ CDN Range requests may
+  // reject otherwise valid temporary URLs with 400.
+  const MAX_DESKTOP_FALLBACK_BYTES = 256 * 1024 * 1024
+
   class QqRangeReader extends Reader<string> {
-    readonly url: string
+    url: string
     readonly expectedSize: number
     readonly artifactIndex: number
+    private wholeFile: Blob | null = null
 
     constructor(artifact: ResolvedArtifact, artifactIndex: number) {
       super(artifact.url)
@@ -230,15 +236,87 @@ async function extractZip(artifacts: ResolvedArtifact[], ticket: ReceiverTicket,
       return super.createReadable({ ...options, chunkSize: options.chunkSize || 8 * 1024 * 1024 })
     }
 
+    private async fetchWholeFile(): Promise<Blob> {
+      if (this.wholeFile) return this.wholeFile
+      if (isMobileReceiverBrowser() || this.expectedSize > MAX_DESKTOP_FALLBACK_BYTES) {
+        throw new Error(
+          "QQ CDN 不支持当前浏览器的 Range 请求。文件较大或处于移动设备，请使用 p20-receive CLI 或支持 OPFS 的 HTTPS 浏览器重试；不要重传任务。",
+        )
+      }
+      debug(onDebug, "http", "QQ CDN Range 不可用，改为整包下载到浏览器内存", {
+        artifact: artifacts[this.artifactIndex].name, size: this.expectedSize,
+        fallback_limit_bytes: MAX_DESKTOP_FALLBACK_BYTES,
+      })
+      onProgress({
+        phase: "DOWNLOADING", artifact_name: artifacts[this.artifactIndex].name,
+        message: "QQ CDN 拒绝分段读取，正在尝试完整下载加密包（仍由浏览器直连 QQ）…",
+        download_bytes_total: totalBytes,
+      })
+      const response = await fetch(this.url, {
+        method: "GET", referrer: "", referrerPolicy: "no-referrer", cache: "no-store",
+      })
+      if (response.status !== 200) {
+        throw new Error(`QQ CDN 分段请求和完整下载均失败（完整下载 HTTP ${response.status}）。请稍后重新点击接收，无需重新上传。`)
+      }
+      const headerSize = response.headers.get("content-length")
+      if (headerSize !== null && Number(headerSize) !== this.expectedSize) {
+        await response.body?.cancel()
+        throw new Error("QQ CDN 完整下载的 Content-Length 与任务文件大小不一致")
+      }
+      const parts: ArrayBuffer[] = []
+      let received = 0
+      if (!response.body) {
+        const part = await response.arrayBuffer()
+        parts.push(part)
+        received += part.byteLength
+      } else {
+        const reader = response.body.getReader()
+        try {
+          while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+            if (!value?.length) continue
+            received += value.byteLength
+            if (received > this.expectedSize) throw new Error("QQ CDN 完整下载超出了预期字节数")
+            // Convert to an owned ArrayBuffer so BlobPart never receives a
+            // SharedArrayBuffer or a mutable/reused stream backing buffer.
+            const part = new Uint8Array(value.byteLength)
+            part.set(value)
+            parts.push(part.buffer)
+            networkBytes += value.byteLength
+            coverages[this.artifactIndex].add(received - value.byteLength, received)
+            emitDownload(this.artifactIndex)
+          }
+        } catch (error) {
+          try { await reader.cancel() } catch {}
+          throw error
+        }
+      }
+      if (received !== this.expectedSize) throw new Error(`QQ CDN 完整下载长度不一致：期望 ${this.expectedSize}，实际 ${received}`)
+      if (!response.body) {
+        networkBytes += received
+        coverages[this.artifactIndex].add(0, received)
+        emitDownload(this.artifactIndex)
+      }
+      this.wholeFile = new Blob(parts, { type: "application/octet-stream" })
+      debug(onDebug, "http", "QQ CDN 完整下载回退成功", { received, archive_size: this.wholeFile.size })
+      return this.wholeFile
+    }
+
     async readUint8Array(index: number, length: number): Promise<Uint8Array> {
       if (length <= 0 || index >= this.expectedSize) return new Uint8Array()
       if (index < 0) throw new Error("QQ CDN Range 起点无效")
       const wanted = Math.min(length, this.expectedSize - index)
+      if (this.wholeFile) return new Uint8Array(await this.wholeFile.slice(index, index + wanted).arrayBuffer())
       const range = `bytes=${index}-${index + wanted - 1}`
       const started = performance.now()
+      const doRange = async (url: string): Promise<Response> => fetch(url, {
+        method: "GET", headers: { Range: range },
+        referrer: "", referrerPolicy: "no-referrer", cache: "no-store",
+      })
       let response: Response
       try {
-        response = await fetch(this.url, { method: "GET", headers: { Range: range }, referrerPolicy: "no-referrer", cache: "no-store" })
+        response = await doRange(this.url)
       } catch (error) {
         debug(onDebug, "http", "QQ CDN Range 请求异常", { range, error: error instanceof Error ? error.message : String(error) })
         throw error
@@ -249,6 +327,19 @@ async function extractZip(artifacts: ResolvedArtifact[], ticket: ReceiverTicket,
         last_modified: response.headers.get("last-modified"), etag: response.headers.get("etag"),
         elapsed_ms: Math.round(performance.now() - started),
       })
+      if (response.status === 400 || response.status === 416) {
+        try { await response.body?.cancel() } catch {}
+        debug(onDebug, "http", "QQ CDN Range 被拒绝，刷新临时链接并重试一次", { range, status: response.status })
+        const fresh = await resolveOneArtifact(artifacts[this.artifactIndex], onProgress, onDebug)
+        this.url = fresh.url
+        response = await doRange(this.url)
+        debug(onDebug, "http", "刷新临时链接后的 Range 响应", { range, status: response.status })
+        if (response.status === 400 || response.status === 416) {
+          try { await response.body?.cancel() } catch {}
+          const archive = await this.fetchWholeFile()
+          return new Uint8Array(await archive.slice(index, index + wanted).arrayBuffer())
+        }
+      }
       if (response.status !== 206) throw new Error(`QQ CDN Range 请求失败：HTTP ${response.status}`)
       const visibleRange = response.headers.get("content-range")
       if (visibleRange) {
