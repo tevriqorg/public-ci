@@ -16,7 +16,7 @@
 
 ## 配置门禁
 
-- 需要由拥有授权的账号在 **public-ci 的 Actions Repository Secret** 中设置 `P22_SOURCE_READ_TOKEN`，仅 P22 源码 `Contents:read`，最小期限/定期轮换。**还必须在受保护 Environment `p22-vivo-fixed-signing` 中配置 `P22_VIVO_KEYSTORE_P12_B64`、`P22_VIVO_KEYSTORE_PASSWORD_B64`。这两项已经由 Human 手工配置且已验证存在。**
+- 需要由拥有授权的账号在 **public-ci 的受保护 Environment `p22-vivo-fixed-signing` Secrets** 中设置 `P22_SOURCE_READ_TOKEN`，仅 P22 源码 `Contents:read`，最小期限/定期轮换。**还必须在受保护 Environment `p22-vivo-fixed-signing` 中配置 `P22_VIVO_KEYSTORE_P12_B64`、`P22_VIVO_KEYSTORE_PASSWORD_B64`。这两项已经由 Human 手工配置且已验证存在。**
 - GitHub Actions 运行前必须在主分支启用工作流；手动指定已审查源码 SHA。不得用 PR head 或不受信任 ref。
 - 东京原签名材料仍保留备份于 `/home/ubuntu/.config/pxt9/signing/` 下受限文件。Actions Environment Secrets 已复制同一身份；只能由指定审批人批准签名 job，允许分支 `main`；不能把 Base64 当作脱敏形式发送到 Git、Actions 日志、Issue、聊天。
 - 下载者必须确认 APK 来自本项目 P22 固定证书，安装前检验 SHA256；P20 仅是传输通道，不替代完整性校验。
