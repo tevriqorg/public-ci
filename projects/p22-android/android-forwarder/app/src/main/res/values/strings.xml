@@ -118,4 +118,8 @@
     <string name="p22_device_status_save">保存设备状态同步设置</string>
     <string name="p22_device_status_saved">设备状态同步设置已保存</string>
     <string name="p22_device_status_consent">启用后，手机会定期将电量、网络、系统版本、P22 的权限与传输状态，以及 Shizuku 服务连接状态加密发送到你配对的 iPhone。不会上传其他 APP 的内部数据、位置或短信明文。你可以随时关闭。</string>
+    <string name="p22_device_status_send">立即上报一次设备状态</string>
+    <string name="p22_device_status_first_enable">请先开启并保存设备状态同步</string>
+    <string name="p22_device_status_queued">状态已排队，等待网络发送。请稍后查看最近送达时间</string>
+    <string name="p22_device_status_queue_failed">未能加入发送队列，请检查诊断信息与东京加密规则</string>
 </resources>

@@ -84,6 +84,7 @@ public final class P22DeviceStatus {
                     .putString(RequestWorker.DATA_TEXT,ciphertext)
                     .putString(RequestWorker.DATA_HEADERS,headers.toString())
                     .putBoolean(RequestWorker.DATA_PXT9_MODE,true)
+                    .putBoolean(RequestWorker.DATA_DEVICE_STATUS,true)
                     .putBoolean(RequestWorker.DATA_IGNORE_SSL,false)
                     .putBoolean(RequestWorker.DATA_CHUNKED_MODE,false)
                     .putInt(RequestWorker.DATA_MAX_RETRIES,4)
@@ -92,12 +93,15 @@ public final class P22DeviceStatus {
                     .putBoolean(RequestWorker.DATA_STORE_FAILED,false)
                     .build();
                 RequestWorker.enqueue(ctx,data);
+                P22DeviceStatusSettings.record(ctx,"queued");
                 return true;
             }catch(Exception ignored){
+                P22DeviceStatusSettings.record(ctx,"prepare_failed");
                 // Never log device identifiers, signed headers or encrypted payload.
                 return false;
             }
         }
+        P22DeviceStatusSettings.record(ctx,"no_rule");
         return false;
     }
 }

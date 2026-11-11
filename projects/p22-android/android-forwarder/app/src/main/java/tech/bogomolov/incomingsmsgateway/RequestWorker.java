@@ -28,6 +28,7 @@ public class RequestWorker extends Worker {
     public final static String DATA_STORE_FAILED = "STORE_FAILED";
     public final static String DATA_LOCAL_MODE = "LOCAL_MODE";
     public final static String DATA_PXT9_MODE = "PXT9_MODE";
+    public final static String DATA_DEVICE_STATUS = "DEVICE_STATUS";
 
     public RequestWorker(
             @NonNull Context context,
@@ -119,6 +120,10 @@ public class RequestWorker extends Worker {
             } else {
                 NotificationSettings.markDeliveryFailure(getApplicationContext());
             }
+        }
+        if (getInputData().getBoolean(DATA_DEVICE_STATUS, false)) {
+            P22DeviceStatusSettings.record(getApplicationContext(),
+                    Request.RESULT_SUCCESS.equals(result) ? "success" : "failure");
         }
 
         if (result.equals(Request.RESULT_RETRY)) {

@@ -190,12 +190,23 @@ public class SettingsActivity extends AppCompatActivity {
     private void setupDeviceStatusSection() {
         SwitchCompat monitor=findViewById(R.id.input_device_status);
         monitor.setChecked(P22DeviceStatusSettings.enabled(this));
+        findViewById(R.id.btn_device_status_send).setOnClickListener(view -> {
+            if(!P22DeviceStatusSettings.enabled(this)){
+                Toast.makeText(this,R.string.p22_device_status_first_enable,Toast.LENGTH_LONG).show();
+                return;
+            }
+            boolean queued=P22DeviceStatus.enqueue(this);
+            refreshP22Diagnostics();
+            Toast.makeText(this,queued?R.string.p22_device_status_queued:
+                R.string.p22_device_status_queue_failed,Toast.LENGTH_LONG).show();
+        });
         findViewById(R.id.btn_device_status_save).setOnClickListener(view -> {
             Runnable apply=()->{
                 P22DeviceStatusSettings.setEnabled(this,monitor.isChecked());
                 Intent intent=new Intent(this,SmsReceiverService.class);
                 intent.setAction("tech.bogomolov.incomingsmsgateway.RESCHEDULE_STATUS");
                 startService(intent);
+                if(monitor.isChecked())P22DeviceStatus.enqueue(this);
                 refreshP22Diagnostics();
                 Toast.makeText(this,R.string.p22_device_status_saved,Toast.LENGTH_SHORT).show();
             };
@@ -297,7 +308,12 @@ public class SettingsActivity extends AppCompatActivity {
                 + "\n最近东京发送成功：" + when(NotificationSettings.lastDeliverySuccess(this))
                 + "\n最近东京发送失败：" + when(NotificationSettings.lastDeliveryFailure(this))
                 + "\nShizuku：" + ShizukuDiagnostics.status(this)
-                + "\n设备状态加密同步：" + (P22DeviceStatusSettings.enabled(this) ? "已开启" : "关闭");
+                + "\n设备状态加密同步：" + (P22DeviceStatusSettings.enabled(this) ? "已开启" : "关闭")
+                + "\n状态最近排队：" + when(P22DeviceStatusSettings.last(this,"queued"))
+                + "\n状态最近送达成功：" + when(P22DeviceStatusSettings.last(this,"success"))
+                + "\n状态最近发送失败：" + when(P22DeviceStatusSettings.last(this,"failure"))
+                + "\n规则不匹配：" + when(P22DeviceStatusSettings.last(this,"no_rule"))
+                + "\n状态准备失败：" + when(P22DeviceStatusSettings.last(this,"prepare_failed"));
         status.setText(report);
     }
 
