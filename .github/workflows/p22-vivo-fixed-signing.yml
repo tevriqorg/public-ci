@@ -7,6 +7,11 @@ on:
         description: Exact 40-char commit in private tevriqorg/P22-Personal-Relay
         required: true
         type: string
+      fixed_sign:
+        description: Fixed-sign using existing vivo cert after environment approval
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -97,3 +102,68 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+
+  fixed-sign:
+    if: github.repository == 'tevriqorg/public-ci' && github.ref == 'refs/heads/main' && inputs.fixed_sign == true
+    needs: build-unsigned
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: p22-vivo-fixed-signing
+    permissions:
+      contents: read
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout approved signer
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download this run's unsigned candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: p22-vivo-UNSIGNED-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/p22-unsigned
+      - name: Restore existing original vivo identity
+        env:
+          P22_P12_B64: ${{ secrets.P22_VIVO_KEYSTORE_P12_B64 }}
+          P22_PASSWORD_B64: ${{ secrets.P22_VIVO_KEYSTORE_PASSWORD_B64 }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_SHA" = "$(cat "$RUNNER_TEMP/p22-unsigned/SOURCE_SHA")"
+          test -n "$P22_P12_B64" && test -n "$P22_PASSWORD_B64" || {
+            echo '::error::No existing signed identity. No new key generation allowed.'
+            exit 1
+          }
+          umask 077
+          mkdir -p "$RUNNER_TEMP/p22-secret" "$RUNNER_TEMP/p22-signed"
+          printf '%s' "$P22_P12_B64" | base64 --decode > "$RUNNER_TEMP/p22-secret/vivo-test-keystore.p12"
+          printf '%s' "$P22_PASSWORD_B64" | base64 --decode > "$RUNNER_TEMP/p22-secret/keystore.password"
+          chmod 600 "$RUNNER_TEMP/p22-secret/"*
+      - name: Locate Android apksigner and aapt
+        run: |
+          set -euo pipefail
+          TOOLS=/usr/local/lib/android/sdk/build-tools/33.0.2
+          if ! test -x "$TOOLS/apksigner" || ! test -x "$TOOLS/aapt"; then
+            SDKMANAGER="$(find /usr/local/lib/android/sdk/cmdline-tools -path '*/bin/sdkmanager' -type f | head -n 1)"
+            "$SDKMANAGER" --sdk_root=/usr/local/lib/android/sdk --install 'build-tools;33.0.2'
+          fi
+          echo "$TOOLS" >> "$GITHUB_PATH"
+      - name: Fixed-sign and verify pinned vivo certificate
+        run: |
+          set -euo pipefail
+          python3 scripts/p22_vivo_fixed_sign.py \
+            --input "$RUNNER_TEMP/p22-unsigned/app-release-unsigned.apk" \
+            --output "$RUNNER_TEMP/p22-signed/P22-vivo-fixed-${SOURCE_SHA:0:8}.apk" \
+            --source-sha "$SOURCE_SHA" \
+            --signing-dir "$RUNNER_TEMP/p22-secret" \
+            --candidate-manifest "$RUNNER_TEMP/p22-unsigned/candidate.json"
+      - name: Remove ephemeral signing identity
+        if: always()
+        run: rm -f "$RUNNER_TEMP/p22-secret/vivo-test-keystore.p12" "$RUNNER_TEMP/p22-secret/keystore.password"
+      - name: Upload verified fixed-signed P20 handoff candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: p22-vivo-FIXED-SIGNED-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/p22-signed/
+          if-no-files-found: error
+          retention-days: 1
