@@ -25,6 +25,7 @@ jobs:
     if: github.repository == 'tevriqorg/public-ci' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    environment: p22-vivo-fixed-signing
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
