@@ -24,13 +24,16 @@ jobs:
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
-      - name: Validate SHA and required read-only credential
+      - name: Verify trusted P22 main HEAD and limited read-only credential
         env:
-          PRIVATE_READ_TOKEN: ${{ secrets.P22_SOURCE_READ_TOKEN }}
+          GH_TOKEN: ${{ secrets.P22_SOURCE_READ_TOKEN }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Expected an exact immutable SHA."; exit 1; }
-          test -n "$PRIVATE_READ_TOKEN" || { echo "::error::Missing P22_SOURCE_READ_TOKEN with Contents:read on P22 only."; exit 1; }
+          test -n "$GH_TOKEN" || { echo "::error::Missing P22_SOURCE_READ_TOKEN with Contents:read on P22 only."; exit 1; }
+          # Do not let manually supplied historical or unreviewed commits run with a private source read token.
+          actual_main="$(gh api repos/tevriqorg/P22-Personal-Relay/git/ref/heads/main --jq .object.sha)"
+          test "$actual_main" = "$SOURCE_SHA" || { echo "::error::Requested source must exactly match reviewed P22 main HEAD."; exit 1; }
       - name: Checkout immutable private P22 source (not public-ci)
         uses: actions/checkout@v4
         with:
