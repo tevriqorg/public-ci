@@ -33,6 +33,9 @@ public class SmsReceiverService extends Service {
     private HandlerThread heartbeatThread;
     private Handler heartbeatHandler;
     private Runnable heartbeatRunnable;
+    private HandlerThread statusThread;
+    private Handler statusHandler;
+    private Runnable statusRunnable;
 
     @Override
     public void onCreate() {
@@ -63,12 +66,16 @@ public class SmsReceiverService extends Service {
         }
 
         startHeartbeat();
+        startDeviceStatus();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_RESCHEDULE_HEARTBEAT.equals(intent.getAction())) {
             startHeartbeat();
+        }
+        if (intent != null && "tech.bogomolov.incomingsmsgateway.RESCHEDULE_STATUS".equals(intent.getAction())) {
+            startDeviceStatus();
         }
         return START_STICKY;
     }
@@ -78,6 +85,7 @@ public class SmsReceiverService extends Service {
         super.onDestroy();
 
         stopHeartbeat();
+        stopDeviceStatus();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             stopForeground(true);
@@ -137,6 +145,28 @@ public class SmsReceiverService extends Service {
         } catch (Exception e) {
             Log.e("SmsGateway", "heartbeat error: " + e);
         }
+    }
+
+    private void startDeviceStatus() {
+        stopDeviceStatus();
+        if (!P22DeviceStatusSettings.enabled(this))return;
+        statusThread=new HandlerThread("P22Status");
+        statusThread.start();
+        statusHandler=new Handler(statusThread.getLooper());
+        statusRunnable=new Runnable(){
+            @Override public void run(){
+                if(P22DeviceStatusSettings.enabled(SmsReceiverService.this))
+                    P22DeviceStatus.enqueue(SmsReceiverService.this);
+                if(statusHandler!=null)statusHandler.postDelayed(this,5*60_000L);
+            }
+        };
+        statusHandler.postDelayed(statusRunnable,10_000L);
+    }
+    private void stopDeviceStatus(){
+        if(statusHandler!=null && statusRunnable!=null)
+            statusHandler.removeCallbacks(statusRunnable);
+        if(statusThread!=null)statusThread.quit();
+        statusThread=null;statusHandler=null;statusRunnable=null;
     }
 
     @Nullable

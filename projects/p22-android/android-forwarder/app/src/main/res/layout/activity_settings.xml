@@ -142,6 +142,28 @@
             style="@style/AppTheme.SectionHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:text="@string/p22_device_status_title" />
+        <TextView
+            style="@style/AppTheme.HelperText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/p22_device_status_help" />
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/input_device_status"
+            style="@style/AppTheme.SwitchRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/p22_device_status_enable" />
+        <Button
+            android:id="@+id/btn_device_status_save"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/p22_device_status_save" />
+        <TextView
+            style="@style/AppTheme.SectionHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="@string/label_heartbeat_section" />
 
         <TextView

@@ -22,6 +22,12 @@ public final class P22NotificationForwarder {
 
     public static int enqueue(Context context, String packageName, String appName,
                               String title, String content, long postTime) {
+        return enqueue(context, packageName, appName, title, content, postTime, false);
+    }
+
+    public static int enqueue(Context context, String packageName, String appName,
+                              String title, String content, long postTime,
+                              boolean fromSmsApp) {
         List<ForwardingConfig> configs = ForwardingConfig.getAll(context);
         int enqueued = 0;
         for (ForwardingConfig config : configs) {
@@ -31,7 +37,8 @@ public final class P22NotificationForwarder {
                 String device = json.getString("X-PXT9-Recipient-Device");
                 String publicKey = json.getString("X-PXT9-Recipient-Key");
                 String envelope = Pxt9Crypto.encryptNotification(
-                        packageName, appName, title, content, postTime, device, publicKey);
+                        packageName, appName, title, content, postTime, device, publicKey,
+                        fromSmsApp ? "sms_app_notification" : "app_notification");
                 json.remove("X-PXT9-Recipient-Device");
                 json.remove("X-PXT9-Recipient-Key");
                 Data payload = new Data.Builder()
