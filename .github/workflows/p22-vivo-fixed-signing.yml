@@ -1,4 +1,4 @@
-name: P22 vivo Android fixed-certificate upgrade candidate
+name: P22 vivo Android unsigned CI for Tokyo fixed-signing and P20
 
 on:
   workflow_dispatch:
@@ -8,11 +8,6 @@ on:
         required: true
         type: string
         default: '9bb136085378f327024ee94b5a10456137661d23'
-      fixed_sign:
-        description: Sign with the EXISTING vivo certificate after environment approval
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -92,7 +87,7 @@ jobs:
           print("P22 unsigned package/provenance gate PASS; versionCode=" + m.group(2))
           PY
           cp "$APK" "$RUNNER_TEMP/p22-unsigned/app-release-unsigned.apk"
-      - name: Upload UNSIGNED intermediate (not installable)
+      - name: Upload UNSIGNED intermediate for Tokyo fixed-signing, not for end users
         uses: actions/upload-artifact@v4
         with:
           name: p22-vivo-UNSIGNED-${{ inputs.source_sha }}
@@ -100,60 +95,3 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  fixed-sign:
-    if: github.repository == 'tevriqorg/public-ci' && github.ref == 'refs/heads/main' && inputs.fixed_sign == true
-    needs: build-unsigned
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: p22-vivo-fixed-signing
-    permissions:
-      contents: read
-    env:
-      SOURCE_SHA: ${{ inputs.source_sha }}
-    steps:
-      - name: Checkout trusted signing script only
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Download exactly this run's unsigned output
-        uses: actions/download-artifact@v4
-        with:
-          name: p22-vivo-UNSIGNED-${{ inputs.source_sha }}
-          path: ${{ runner.temp }}/p22-unsigned
-      - name: Confirm prerequisites and restore protected EXISTING identity
-        env:
-          P22_P12_B64: ${{ secrets.P22_VIVO_KEYSTORE_P12_B64 }}
-          P22_PASSWORD_B64: ${{ secrets.P22_VIVO_KEYSTORE_PASSWORD_B64 }}
-        run: |
-          set -euo pipefail
-          test "$SOURCE_SHA" = "$(cat "$RUNNER_TEMP/p22-unsigned/SOURCE_SHA")"
-          test -n "$P22_P12_B64" && test -n "$P22_PASSWORD_B64" || {
-            echo "::error::Existing fixed vivo signing identity is not configured in the protected environment."
-            exit 1
-          }
-          umask 077
-          install -d -m 700 "$RUNNER_TEMP/p22-signing"
-          printf '%s' "$P22_P12_B64" | base64 --decode > "$RUNNER_TEMP/p22-signing/vivo-test-keystore.p12"
-          printf '%s' "$P22_PASSWORD_B64" | base64 --decode > "$RUNNER_TEMP/p22-signing/keystore.password"
-          chmod 600 "$RUNNER_TEMP/p22-signing/"*
-      - name: Sign and verify exact old vivo certificate and Android identity
-        run: |
-          set -euo pipefail
-          export PATH="/usr/local/lib/android/sdk/build-tools/33.0.2:$PATH"
-          mkdir -p "$RUNNER_TEMP/p22-signed"
-          python3 scripts/p22_vivo_fixed_sign.py \
-            --input "$RUNNER_TEMP/p22-unsigned/app-release-unsigned.apk" \
-            --output "$RUNNER_TEMP/p22-signed/P22-vivo-fixed-${SOURCE_SHA:0:8}.apk" \
-            --source-sha "$SOURCE_SHA" \
-            --signing-dir "$RUNNER_TEMP/p22-signing" \
-            --candidate-manifest "$RUNNER_TEMP/p22-unsigned/candidate.json"
-      - name: Remove ephemeral private signing material
-        if: always()
-        run: rm -f "$RUNNER_TEMP/p22-signing/vivo-test-keystore.p12" "$RUNNER_TEMP/p22-signing/keystore.password"
-      - name: Upload VERIFIED fixed-signed upgrade candidate (not a real-device PASS)
-        uses: actions/upload-artifact@v4
-        with:
-          name: p22-vivo-FIXED-SIGNED-${{ inputs.source_sha }}
-          path: ${{ runner.temp }}/p22-signed/
-          if-no-files-found: error
-          retention-days: 14

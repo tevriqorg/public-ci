@@ -20,3 +20,7 @@ need a source key, or upload build artifacts.
 
 Project snapshots are updated through reviewed commits. Never add credentials,
 private runtime configuration, local state, or real household media here.
+
+## P22 Personal Relay Android
+
+P22 私有项目的 Android unsigned APK 可在公共 runner 编译；**仅东京本地固定证书签名后通过 P20 QQ 闪传交付**，不在 GitHub Action/Release 发布可安装 APK，不上传任何生产私钥。门禁与操作说明见 [`docs/P22_VIVO_FIXED_SIGNING.md`](docs/P22_VIVO_FIXED_SIGNING.md)。
