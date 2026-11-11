@@ -117,6 +117,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         setupBackupSection();
         setupNotificationSection();
+        setupDeviceStatusSection();
         Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
     }
 
@@ -183,6 +184,28 @@ public class SettingsActivity extends AppCompatActivity {
             } else {
                 save.run();
             }
+        });
+    }
+
+    private void setupDeviceStatusSection() {
+        SwitchCompat monitor=findViewById(R.id.input_device_status);
+        monitor.setChecked(P22DeviceStatusSettings.enabled(this));
+        findViewById(R.id.btn_device_status_save).setOnClickListener(view -> {
+            Runnable apply=()->{
+                P22DeviceStatusSettings.setEnabled(this,monitor.isChecked());
+                Intent intent=new Intent(this,SmsReceiverService.class);
+                intent.setAction("tech.bogomolov.incomingsmsgateway.RESCHEDULE_STATUS");
+                startService(intent);
+                refreshP22Diagnostics();
+                Toast.makeText(this,R.string.p22_device_status_saved,Toast.LENGTH_SHORT).show();
+            };
+            if(monitor.isChecked()&&!P22DeviceStatusSettings.enabled(this)) {
+                new AlertDialog.Builder(this)
+                    .setTitle(R.string.p22_device_status_title)
+                    .setMessage(R.string.p22_device_status_consent)
+                    .setPositiveButton(R.string.btn_save,(dialog,which)->apply.run())
+                    .setNegativeButton(R.string.btn_cancel,null).show();
+            }else apply.run();
         });
     }
 
@@ -273,7 +296,8 @@ public class SettingsActivity extends AppCompatActivity {
                 + "\n最近东京发送尝试：" + when(NotificationSettings.lastDeliveryAttempt(this))
                 + "\n最近东京发送成功：" + when(NotificationSettings.lastDeliverySuccess(this))
                 + "\n最近东京发送失败：" + when(NotificationSettings.lastDeliveryFailure(this))
-                + "\nShizuku：" + ShizukuDiagnostics.status(this);
+                + "\nShizuku：" + ShizukuDiagnostics.status(this)
+                + "\n设备状态加密同步：" + (P22DeviceStatusSettings.enabled(this) ? "已开启" : "关闭");
         status.setText(report);
     }
 

@@ -67,8 +67,18 @@ public final class Pxt9Crypto {
             String appPackage, String appName, String title, String content,
             long receivedAt, String recipientDeviceId, String recipientPublicKeyB64
     ) throws Exception {
+        return encryptNotification(appPackage, appName, title, content, receivedAt,
+                recipientDeviceId, recipientPublicKeyB64, "app_notification");
+    }
+
+    public static String encryptNotification(
+            String appPackage, String appName, String title, String content,
+            long receivedAt, String recipientDeviceId, String recipientPublicKeyB64,
+            String sourceKind
+    ) throws Exception {
         JSONObject plaintextJson = new JSONObject();
         plaintextJson.put("type", "notification");
+        plaintextJson.put("sourceKind", sourceKind);
         plaintextJson.put("sender", appName);
         plaintextJson.put("appName", appName);
         plaintextJson.put("appPackage", appPackage);
@@ -77,6 +87,14 @@ public final class Pxt9Crypto {
                 : (content.isEmpty() ? title : title + "\n" + content));
         plaintextJson.put("receivedAt", receivedAt);
         return encryptPayload(plaintextJson, recipientDeviceId, recipientPublicKeyB64);
+    }
+
+    public static String encryptStatus(
+            JSONObject status, String recipientDeviceId, String recipientPublicKeyB64
+    ) throws Exception {
+        if (status == null || !"device_status".equals(status.optString("type")))
+            throw new IllegalArgumentException("Invalid device status snapshot");
+        return encryptPayload(status, recipientDeviceId, recipientPublicKeyB64);
     }
 
     /** Keep the established v1 envelope/AAD interoperable with deployed iPhone. */

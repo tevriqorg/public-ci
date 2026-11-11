@@ -112,4 +112,10 @@
     <string name="p22_shizuku_old_version">Shizuku 服务版本过旧，无法申请授权</string>
     <string name="p22_pick_search_hint">搜索 APP 名称或包名</string>
     <string name="p22_pick_no_results">没有匹配的应用（可改为手动输入）</string>
+    <string name="p22_device_status_title">P22 · 远程设备状态（加密）</string>
+    <string name="p22_device_status_help">定期约 5 分钟同步电量、充电、网络、转发权限与 Shizuku 连接状态。东京只保存最新加密快照；不产生消息和推送。需要已启用的东京加密规则，默认关闭。</string>
+    <string name="p22_device_status_enable">在 iPhone 上查看此 vivo 的设备状态</string>
+    <string name="p22_device_status_save">保存设备状态同步设置</string>
+    <string name="p22_device_status_saved">设备状态同步设置已保存</string>
+    <string name="p22_device_status_consent">启用后，手机会定期将电量、网络、系统版本、P22 的权限与传输状态，以及 Shizuku 服务连接状态加密发送到你配对的 iPhone。不会上传其他 APP 的内部数据、位置或短信明文。你可以随时关闭。</string>
 </resources>

@@ -2,6 +2,7 @@ package tech.bogomolov.incomingsmsgateway;
 
 import android.app.Notification;
 import android.os.Bundle;
+import android.provider.Telephony;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
@@ -81,6 +82,8 @@ public class P22NotificationListener extends NotificationListenerService {
         }
         final String finalAppName = appName;
         final String sourcePackage = sbn.getPackageName();
+        final String defaultSmsPackage = Telephony.Sms.getDefaultSmsPackage(this);
+        final boolean fromSmsApp = sourcePackage.equals(defaultSmsPackage);
         final long postedAt = sbn.getPostTime();
         try {
             forwarder.execute(() -> {
@@ -89,7 +92,7 @@ public class P22NotificationListener extends NotificationListenerService {
                         || NotificationSettings.seenRecently(this, digest)) return;
                 try {
                     if (P22NotificationForwarder.enqueue(this, sourcePackage,
-                            finalAppName, title, content, postedAt) > 0)
+                            finalAppName, title, content, postedAt, fromSmsApp) > 0)
                         NotificationSettings.markEnqueued(this);
                 } catch (Exception error) {
                     Log.e("P22Notification", "Notification was not queued; no content logged");
