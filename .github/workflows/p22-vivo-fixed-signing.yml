@@ -7,7 +7,6 @@ on:
         description: Exact 40-char commit in private tevriqorg/P22-Personal-Relay
         required: true
         type: string
-        default: '9bb136085378f327024ee94b5a10456137661d23'
 
 permissions:
   contents: read
