@@ -155,6 +155,12 @@
             android:layout_height="wrap_content"
             android:text="@string/p22_device_status_enable" />
         <Button
+            android:id="@+id/btn_device_status_send"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/p22_device_status_send" />
+        <Button
             android:id="@+id/btn_device_status_save"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"

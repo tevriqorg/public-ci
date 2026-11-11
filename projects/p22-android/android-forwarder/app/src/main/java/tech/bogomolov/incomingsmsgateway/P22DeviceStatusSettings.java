@@ -10,6 +10,18 @@ public final class P22DeviceStatusSettings {
         return ctx.getSharedPreferences(NAME,Context.MODE_PRIVATE)
                 .getBoolean("enabled",false);
     }
+    public static void record(Context ctx,String event){
+        // Metadata-only diagnostics. Never persist payloads, keys, phone numbers or OTPs.
+        if(!("queued".equals(event)||"success".equals(event)||
+             "failure".equals(event)||"no_rule".equals(event)||
+             "prepare_failed".equals(event)))return;
+        ctx.getSharedPreferences(NAME,Context.MODE_PRIVATE).edit()
+                .putLong("last_"+event,System.currentTimeMillis()).apply();
+    }
+    public static long last(Context ctx,String event){
+        return ctx.getSharedPreferences(NAME,Context.MODE_PRIVATE)
+                .getLong("last_"+event,0);
+    }
     public static void setEnabled(Context ctx,boolean value){
         ctx.getSharedPreferences(NAME,Context.MODE_PRIVATE)
                 .edit().putBoolean("enabled",value).apply();
