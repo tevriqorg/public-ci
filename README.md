@@ -23,4 +23,4 @@ private runtime configuration, local state, or real household media here.
 
 ## P22 Personal Relay Android
 
-P22 私有项目的 Android unsigned APK 可在公共 runner 编译；**仅东京本地固定证书签名后通过 P20 QQ 闪传交付**，不在 GitHub Action/Release 发布可安装 APK，不上传任何生产私钥。门禁与操作说明见 [`docs/P22_VIVO_FIXED_SIGNING.md`](docs/P22_VIVO_FIXED_SIGNING.md)。
+P22 使用仅包含 Android 编译必需文件的 public-safe snapshot：projects/p22-android/。SOURCE_REVISION 指明私有仓库源码版本。运行 P22 Android snapshot fixed-signing candidate (P20 only) 时不需要专用 GitHub Token；人工审批后使用受保护 Environment 的原证书完成固定签名，最终 APK 仍由东京通过 P20 QQ 闪传交付（P20 自动对接待验收）。不允许复制整个私有 P22 仓库。操作与风险见 docs/P22_VIVO_FIXED_SIGNING.md。

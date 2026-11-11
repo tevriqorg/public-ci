@@ -1,27 +1,25 @@
-# P22 vivo 同签名升级｜公开 CI → 东京固定签名 → P20
+# P22 vivo 固定签名｜公开 CI 快照 → P20
 
-## 唯一交付链路
+## 方案
 
-1. 源码仍在私有 `tevriqorg/P22-Personal-Relay`。本公开仓库的 Actions 使用仅对 P22 具有 `Contents:read` 的 `P22_SOURCE_READ_TOKEN`，按**精确 40 位 commit SHA** 从私有源代码编译、单测和产生 **UNSIGNED release APK**。
-2. public-ci 必须校验原 vivo `applicationId=tech.bogomolov.incomingsmsgateway`、`versionCode >= 18`、非 debuggable，并存 SHA256/来源记录。它在构建阶段仅生成未签名候选；只有操作者选择 `fixed_sign=true`、并通过 `p22-vivo-fixed-signing` Environment 审批后，才允许使用 GitHub Environment Secrets 恢复**既有**签名密钥进行同证书签名。签名文件不进入 Git 提交。
-3. 固定签名运行在 public-ci 受保护 Environment 中，使用 `P22_VIVO_KEYSTORE_P12_B64` 和 `P22_VIVO_KEYSTORE_PASSWORD_B64` 两项现有原签名身份的 Base64 秘密。调用本仓库的 `scripts/p22_vivo_fixed_sign.py`，强制核验证书 SHA256 `30ba94601c871ba5c776febbcb3acf35b20259f3272493dd73ac5cb07741c4c2`、原包名、版本及 APK 摘要。**没有密钥时 fail closed，不创建新签名。**签名结果作为短保留期（1 天）的 Actions 中间 artifact，供 P20 消费。
-4. **最终对用户交付仍通过 P20**：东京仅下载并再次核验 Actions 中已签名 APK，按 P20 既有 QQ 闪传 `delivery_backend=qq_flash`、`delivery_profile=unified`、到期 48 小时、需确认流程发布。**尚未接通 P20 自动化**；不得将 Action artifacts 或 GitHub Release 当作用户下载入口，也不得发布 unsigned/debug APK。
-5. Vivo 用户在已配对的原应用上**原包名同证书覆盖升级**，保留原配置和设备级 Sender HMAC；**不卸载、不重置配对**。旧 Huawei/P1、Tokyo relay 正式服务不参与构建链路。
+- 私有 tevriqorg/P22-Personal-Relay 是唯一正式产品源码仓库，整个仓库绝不能直接公开。
+- 公开 tevriqorg/public-ci 只存放经过安全审查的 Android 构建源码快照：projects/p22-android/android-forwarder/，由 SOURCE_REVISION 记录原仓库的确切 commit。中继端、服务器、PWA、runtime、数据库和部署文件均不迁移。
+- 工作流仅 checkout 本公开仓库，直接构建本地快照，不访问 private P22，也不需要 PAT 或 P22_SOURCE_READ_TOKEN。
+- 快照源码内硬编码的生产 HTTPS relay 域名已替换为 relay.p22.example.invalid。环境 p22-vivo-fixed-signing 中的 P22_RELAY_HOST Secret 只在构建执行期间恢复真实主机名，不提交到 Git 历史。但最终 APK 本身仍可能暴露它需要连接的服务域名。
+- Human 已设置原 vivo 固定签名身份 P22_VIVO_KEYSTORE_P12_B64 和 P22_VIVO_KEYSTORE_PASSWORD_B64。只在审批通过的 GitHub Actions Environment 的 main 工作流内使用，不生成替代证书。
+- 运行路径：GitHub Actions → P22 Android snapshot fixed-signing candidate (P20 only) → Run workflow。fixed_sign=true 默认执行单次编译、JVM 测试、原证书签名和指纹核验。
+- 构建校验包名 tech.bogomolov.incomingsmsgateway、非 debuggable、versionCode 不低于18、来源 SHA 和文件 SHA256。旧证书指纹必须为 30ba94601c871ba5c776febbcb3acf35b20259f3272493dd73ac5cb07741c4c2。失败时不得退回新证书。
+- 生成的 Actions APK 是交给 P20 的临时中间制品，不是 GitHub Release 或用户交付入口。最终应由东京复核 APK 签名、版本、SHA256 后经 P20 QQ 闪传（qq_flash, unified, 48h, ack required）发布。**P20 对接尚待实施验证。**
 
-## 公开与隐私
+## 安全与版本限制
 
-- `tevriqorg/public-ci` 是公开仓库，Actions 日志和制品可公开，**签名后的 APK 将短暂出现在公开仓库 Actions artifacts，可能被其他人下载**。不要把真实消息、证书、token、身份信息写入 APK 或 Action artifact。私有源代码在 runner 临时工作目录编译，不主动上传源代码或 runtime 数据；不要在构建时打印原始配置、真实短信、token、Android 私密 HMAC/HPKE。
-- 不能把 `tevriqorg/P22-Personal-Relay` 整个仓库简单切成 Public：其中还包含私有服务器架构、路径与历史；需要先依据 `tevriqorg/context/governance/OPEN_SOURCE_POLICY.md` 作完整历史审计。
-- Android 源码来自上游并保留 LICENSE。不要把 CI 制品误作实机 PASS：vivo 普通短信、APP 通知、后台恢复和 iPhone 解密通知还需 Human 真机核验。
+- public-ci 是公开仓库，源码快照与 Actions Artifact 可被外部查看；不要加入任何真实短信、HMAC、HPKE 私钥、Token、证书原文、真实日志、内部网络/用户身份。
+- 已对 Java/Gradle/XML、资源和测试的常见凭据、专用 IP/主机名、绝对路径及身份信息做初步检查；安全审查不是绝对无风险保证。
+- GitHub-hosted runner 可以访问受保护的 Secret；审批和 main 分支限制不能替代对公开工作流的代码审查。已签名 APK artifact 在公开仓库保留最长 1 天，期间有可能被他人下载。
+- 快照必须人工更新并逐次复审；禁止自动复制整个私有 Project、实际数据或未审查内容。
+- vivo 必须使用原包名与同一个证书覆盖升级（versionCode 不低于当前设备版本）；不能卸载或重置已经配对的 sender。Huawei/P1 USB 和 Tokyo relay 正式运行环境均不变。完整 SMS/通知 E2E 及 P20 发布待实机验收。
+- 上游软件 MIT License 保留在 Android 快照内。
 
-## 配置门禁
-
-- 需要由拥有授权的账号在 **public-ci 的受保护 Environment `p22-vivo-fixed-signing` Secrets** 中设置 `P22_SOURCE_READ_TOKEN`，仅 P22 源码 `Contents:read`，最小期限/定期轮换。**还必须在受保护 Environment `p22-vivo-fixed-signing` 中配置 `P22_VIVO_KEYSTORE_P12_B64`、`P22_VIVO_KEYSTORE_PASSWORD_B64`。这两项已经由 Human 手工配置且已验证存在。**
-- GitHub Actions 运行前必须在主分支启用工作流；手动指定已审查源码 SHA。不得用 PR head 或不受信任 ref。
-- 东京原签名材料仍保留备份于 `/home/ubuntu/.config/pxt9/signing/` 下受限文件。Actions Environment Secrets 已复制同一身份；只能由指定审批人批准签名 job，允许分支 `main`；不能把 Base64 当作脱敏形式发送到 Git、Actions 日志、Issue、聊天。
-- 下载者必须确认 APK 来自本项目 P22 固定证书，安装前检验 SHA256；P20 仅是传输通道，不替代完整性校验。
-- 待接通 Tokyo / P20 交付脚本（此阶段仍未完成），必须从已验证的 `fixed-sign` artifact 下载，不得自动发布来自 PR 或任意外部 URL 的 APK。
-- 发布前的人工门禁：签名前版本大于当前 vivo；从 P20 下载的 APK sha256 与签名 manifest 相同；用户执行同包名覆盖升级，未经许可不得执行 `pm clear` 或卸载。
-- 任务归属：`tevriqorg/P22-Personal-Relay#5`；CI 项目库：`tevriqorg/public-ci`。
+跟踪：tevriqorg/P22-Personal-Relay#5。
 
 :By ChatGPT
