@@ -36,11 +36,25 @@ public final class P22NotificationForwarder {
                 JSONObject json = new JSONObject(config.getHeaders());
                 String device = json.getString("X-PXT9-Recipient-Device");
                 String publicKey = json.getString("X-PXT9-Recipient-Key");
-                String envelope = Pxt9Crypto.encryptNotification(
-                        packageName, appName, title, content, postTime, device, publicKey,
-                        fromSmsApp ? "sms_app_notification" : "app_notification");
+                String sourceKind = fromSmsApp ? "sms_app_notification" : "app_notification";
+                String archiveId = json.optString("X-PXT9-Archive-Device", "");
+                String archiveKey = json.optString("X-PXT9-Archive-Key", "");
+                String envelope;
+                if (!archiveId.isEmpty() || !archiveKey.isEmpty()) {
+                    if (archiveId.isEmpty() || archiveKey.isEmpty())
+                        throw new IllegalArgumentException("Incomplete archive recipient");
+                    envelope = Pxt9Crypto.encryptNotification(
+                            packageName, appName, title, content, postTime, device, publicKey,
+                            sourceKind, archiveId, archiveKey);
+                } else {
+                    envelope = Pxt9Crypto.encryptNotification(
+                            packageName, appName, title, content, postTime, device, publicKey,
+                            sourceKind);
+                }
                 json.remove("X-PXT9-Recipient-Device");
                 json.remove("X-PXT9-Recipient-Key");
+                json.remove("X-PXT9-Archive-Device");
+                json.remove("X-PXT9-Archive-Key");
                 Data payload = new Data.Builder()
                         .putString(RequestWorker.DATA_URL, config.getUrl())
                         .putString(RequestWorker.DATA_TEXT, envelope)

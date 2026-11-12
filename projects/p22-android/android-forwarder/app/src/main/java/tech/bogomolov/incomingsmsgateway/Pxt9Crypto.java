@@ -63,6 +63,21 @@ public final class Pxt9Crypto {
         return encryptPayload(plaintextJson, recipientDeviceId, recipientPublicKeyB64);
     }
 
+    /** Optional recovery archive recipient. Old single-device overload is unchanged. */
+    public static String encryptSms(
+            String sender, String body, long receivedAt, String sim,
+            String recipientDeviceId, String recipientPublicKeyB64,
+            String archiveId, String archivePublicKey
+    ) throws Exception {
+        JSONObject plaintextJson = new JSONObject();
+        plaintextJson.put("sender", sender);
+        plaintextJson.put("body", body);
+        plaintextJson.put("receivedAt", receivedAt);
+        plaintextJson.put("sim", sim);
+        return encryptPayload(plaintextJson, recipientDeviceId, recipientPublicKeyB64,
+                archiveId, archivePublicKey);
+    }
+
     public static String encryptNotification(
             String appPackage, String appName, String title, String content,
             long receivedAt, String recipientDeviceId, String recipientPublicKeyB64
@@ -89,6 +104,25 @@ public final class Pxt9Crypto {
         return encryptPayload(plaintextJson, recipientDeviceId, recipientPublicKeyB64);
     }
 
+    public static String encryptNotification(
+            String appPackage, String appName, String title, String content,
+            long receivedAt, String recipientDeviceId, String recipientPublicKeyB64,
+            String sourceKind, String archiveId, String archivePublicKey
+    ) throws Exception {
+        JSONObject plaintextJson = new JSONObject();
+        plaintextJson.put("type", "notification");
+        plaintextJson.put("sourceKind", sourceKind);
+        plaintextJson.put("sender", appName);
+        plaintextJson.put("appName", appName);
+        plaintextJson.put("appPackage", appPackage);
+        plaintextJson.put("title", title);
+        plaintextJson.put("body", title.isEmpty() ? content
+                : (content.isEmpty() ? title : title + "\n" + content));
+        plaintextJson.put("receivedAt", receivedAt);
+        return encryptPayload(plaintextJson, recipientDeviceId, recipientPublicKeyB64,
+                archiveId, archivePublicKey);
+    }
+
     public static String encryptStatus(
             JSONObject status, String recipientDeviceId, String recipientPublicKeyB64
     ) throws Exception {
@@ -102,6 +136,20 @@ public final class Pxt9Crypto {
     private static String encryptPayload(JSONObject plaintextJson,
                                          String recipientDeviceId,
                                          String recipientPublicKeyB64) throws Exception {
+        return encryptPayload(plaintextJson, recipientDeviceId, recipientPublicKeyB64,
+                null, null);
+    }
+
+    @AccessesPartialKey
+    private static String encryptPayload(JSONObject plaintextJson,
+                                         String recipientDeviceId,
+                                         String recipientPublicKeyB64,
+                                         String archiveId,
+                                         String archivePublicKeyB64) throws Exception {
+        if ((archiveId == null) != (archivePublicKeyB64 == null))
+            throw new IllegalArgumentException("Archive id and public key must both be set");
+        if (archiveId != null && (archiveId.isEmpty() || archiveId.equals(recipientDeviceId)))
+            throw new IllegalArgumentException("Invalid archive recipient identity");
         if (recipientDeviceId == null || recipientDeviceId.isEmpty())
             throw new IllegalArgumentException("Recipient device id is empty");
         byte[] recipientPublicKey = decodeB64u(recipientPublicKeyB64);
@@ -127,26 +175,19 @@ public final class Pxt9Crypto {
         aes.updateAAD(aad);
         byte[] ciphertext = aes.doFinal(plaintext);
 
-        HybridEncrypt hpke = createHpkeEncrypt(recipientPublicKey);
-        byte[] wrappedCombined = hpke.encrypt(dataKeyBytes, aad);
-        Arrays.fill(dataKeyBytes, (byte) 0);
-
-        if (wrappedCombined.length <= HPKE_P256_ENC_SIZE) {
-            throw new GeneralSecurityException("HPKE output is too short");
-        }
-        byte[] hpkeEnc = Arrays.copyOfRange(wrappedCombined, 0, HPKE_P256_ENC_SIZE);
-        byte[] hpkeCt = Arrays.copyOfRange(
-                wrappedCombined,
-                HPKE_P256_ENC_SIZE,
-                wrappedCombined.length
-        );
-        JSONObject recipient = new JSONObject();
-        recipient.put("deviceId", recipientDeviceId);
-        recipient.put("enc", b64u(hpkeEnc));
-        recipient.put("ct", b64u(hpkeCt));
-
         JSONArray recipients = new JSONArray();
-        recipients.put(recipient);
+        try {
+            recipients.put(wrapDataKey(recipientDeviceId, recipientPublicKey, dataKeyBytes, aad));
+            if (archiveId != null) {
+                byte[] archiveKey = decodeB64u(archivePublicKeyB64);
+                if (archiveKey.length != 65 || archiveKey[0] != 0x04)
+                    throw new IllegalArgumentException("Invalid archive public key");
+                recipients.put(wrapDataKey(archiveId, archiveKey, dataKeyBytes, aad));
+            }
+        } finally {
+            // Even a failed HPKE encryption must not retain the raw message key.
+            Arrays.fill(dataKeyBytes, (byte) 0);
+        }
 
         JSONObject envelope = new JSONObject();
         envelope.put("v", 1);
@@ -157,5 +198,19 @@ public final class Pxt9Crypto {
         envelope.put("ciphertext", b64u(ciphertext));
         envelope.put("recipients", recipients);
         return envelope.toString();
+    }
+
+    @AccessesPartialKey
+    private static JSONObject wrapDataKey(String deviceId, byte[] publicKey,
+                                           byte[] dataKey, byte[] aad)
+            throws Exception {
+        byte[] combined = createHpkeEncrypt(publicKey).encrypt(dataKey, aad);
+        if (combined.length <= HPKE_P256_ENC_SIZE)
+            throw new GeneralSecurityException("HPKE output is too short");
+        JSONObject result = new JSONObject();
+        result.put("deviceId", deviceId);
+        result.put("enc", b64u(Arrays.copyOfRange(combined,0,HPKE_P256_ENC_SIZE)));
+        result.put("ct", b64u(Arrays.copyOfRange(combined,HPKE_P256_ENC_SIZE,combined.length)));
+        return result;
     }
 }

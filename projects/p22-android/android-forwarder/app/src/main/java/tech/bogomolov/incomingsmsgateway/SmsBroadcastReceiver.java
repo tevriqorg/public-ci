@@ -99,13 +99,24 @@ public class SmsBroadcastReceiver extends BroadcastReceiver {
                     Log.e("SmsBroadcastReceiver", "PXT9 recipient device/key must both be configured");
                     return;
                 }
-                message = Pxt9Crypto.encryptSms(
-                        sender, content, timeStamp, slotName, deviceId, publicKey);
+                String archiveId = headersJson.optString("X-PXT9-Archive-Device", "");
+                String archiveKey = headersJson.optString("X-PXT9-Archive-Key", "");
+                if (!archiveId.isEmpty() || !archiveKey.isEmpty()) {
+                    if (archiveId.isEmpty() || archiveKey.isEmpty())
+                        throw new IllegalArgumentException("Incomplete archive recipient");
+                    message = Pxt9Crypto.encryptSms(sender, content, timeStamp, slotName,
+                            deviceId, publicKey, archiveId, archiveKey);
+                } else {
+                    message = Pxt9Crypto.encryptSms(
+                            sender, content, timeStamp, slotName, deviceId, publicKey);
+                }
                 pxt9Mode = true;
 
                 // These are local configuration values, never HTTP headers.
                 headersJson.remove("X-PXT9-Recipient-Device");
                 headersJson.remove("X-PXT9-Recipient-Key");
+                headersJson.remove("X-PXT9-Archive-Device");
+                headersJson.remove("X-PXT9-Archive-Key");
                 requestHeaders = headersJson.toString();
             } else {
                 message = config.prepareMessage(sender, content, slotName, timeStamp);

@@ -112,6 +112,15 @@ public final class Pxt9Enrollment {
             headers.put("X-PXT9-Sender-ID", senderId);
             headers.put("X-PXT9-Recipient-Device", response.getString("recipientDeviceId"));
             headers.put("X-PXT9-Recipient-Key", response.getString("recipientPublicKey"));
+            String archiveId = response.optString("archiveId", "");
+            String archiveKey = response.optString("archivePublicKey", "");
+            if (!archiveId.isEmpty() || !archiveKey.isEmpty()) {
+                if (!UUID_RE.matcher(archiveId).matches()
+                        || !PUBLIC_KEY.matcher(archiveKey).matches())
+                    throw new JSONException("Invalid archive recipient");
+                headers.put("X-PXT9-Archive-Device", archiveId);
+                headers.put("X-PXT9-Archive-Key", archiveKey);
+            }
 
             JSONObject config = new JSONObject();
             config.put("key", "p22-sender-" + senderId);
@@ -159,6 +168,14 @@ public final class Pxt9Enrollment {
                 || !PUBLIC_KEY.matcher(headers.getString("X-PXT9-Recipient-Key")).matches()
                 || !key.equals("p22-sender-" + headers.getString("X-PXT9-Sender-ID"))) {
             throw new JSONException("Invalid sender/recipient identity");
+        }
+        String archiveId=headers.optString("X-PXT9-Archive-Device", "");
+        String archiveKey=headers.optString("X-PXT9-Archive-Key", "");
+        if (!archiveId.isEmpty() || !archiveKey.isEmpty()) {
+            if (!UUID_RE.matcher(archiveId).matches()
+                    || !PUBLIC_KEY.matcher(archiveKey).matches()
+                    || archiveId.equals(headers.getString("X-PXT9-Recipient-Device")))
+                throw new JSONException("Invalid archive identity");
         }
         return rule;
     }
